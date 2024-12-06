@@ -1,0 +1,31 @@
+# @package _global_
+
+defaults:
+  - override /dataset: astarmaze
+  - override /model: past
+
+model:
+  attn_sink: False
+  bias: True
+  dropout: 0
+  n_embd: 128
+  n_head: 4
+  n_layer: 7
+  scale_loss: False
+  stack_enc_dec: True
+  tie_lmhead: True
+  train_mode: absorbing
+  vocab_size: 64
+
+optim:
+  learning_rate: 0.001
+  warmup_pct: 0.05
+
+datamodule:
+  batch_size: 64
+  grid_n: 10
+  n_mazes: 100000
+
+trainer:
+  check_val_every_n_epoch: 20
+  max_epochs: 500

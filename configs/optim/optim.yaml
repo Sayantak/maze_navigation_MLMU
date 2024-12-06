@@ -1,0 +1,9 @@
+# @package _global_
+optim:
+  optimizer: adamw #adamw, sgd
+  learning_rate: 1e-3
+  weight_decay: 1e-4
+  betas: [0.9, 0.999]
+  warmup_pct: 0.05
+  schedule_free: False
+  grad_clip: 1

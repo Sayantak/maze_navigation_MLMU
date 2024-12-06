@@ -1,0 +1,54 @@
+# @package _global_
+hydra/job_logging: colorlog
+hydra/hydra_logging: colorlog
+
+# self is first so logs_dir can be overwritten based on mode
+defaults:
+  - _self_
+  - optim: optim
+  - mode: local
+  - dataset: maze
+  - model: past
+  - exp: null
+
+# Assortment of default settings
+project: mlmu
+note: ""
+name: ${note}${model_name}-${dataset_name}-lr${optim.learning_rate}
+# TODO change logs_dir this to where you want your logs stored (includes checkpoints)
+logs_dir: /checkpoint/${oc.env:USER}/logs/${project}/${name}/${now:%Y-%m-%d_%H-%M-%S}
+resume: True
+seed: 42
+debug: False
+
+# tells hydra to store logs for sweeps or runs in logs_dir
+hydra:
+  job:
+    name: ${name}
+    # when exceuting a job change to the logs_dir
+    chdir: True
+    env_set:
+      NCCL_P2P_DISABLE: 1
+      # TODO change this to the place you would like your data saved
+      DATA_ROOT: /checkpoint/nolte/knowledge 
+  run:
+    dir: ${logs_dir}
+  sweep:
+    dir: ${logs_dir}
+
+trainer:
+  precision: 16-mixed
+  # default to train on full set of samples
+  limit_train_batches: 1.0
+  overfit_batches: 0
+  accumulate_grad_batches: 1
+
+wandb:
+  project: ${project}
+  entity: mlmu
+  notes: null
+  tags: null
+  log_model: False
+  save_code: True
+  reinit: True
+  offline: False

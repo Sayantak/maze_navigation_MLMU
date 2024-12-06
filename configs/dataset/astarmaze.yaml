@@ -1,0 +1,21 @@
+# @package _global_
+dataset_name : astarmaze${datamodule.grid_n}
+
+datamodule:
+  _target_: recipe.datasets.astarmaze.AstarMazeDataset
+  batch_size: 32
+  num_workers: 8
+  return_prediction_mask: True
+  grid_n: 10 # grid size n by n, make sure to also change vocab_size
+  n_mazes: 100_000 # number of mazes to generate
+
+
+model:
+  # will be overwritten depending on maze size
+  vocab_size: 64 # depends on grid_n 
+
+trainer:
+  check_val_every_n_epoch: 20
+  max_epochs: 2000
+
+rho_model: null

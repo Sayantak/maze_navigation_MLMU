@@ -1,0 +1,8 @@
+# @package _global_
+gpus: 1
+use_wandb: False
+trainer:
+  devices: ${gpus}
+  default_root_dir: ${logs_dir}
+  accelerator: "gpu"
+  num_sanity_val_steps: 0

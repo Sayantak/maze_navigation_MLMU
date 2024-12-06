@@ -1,0 +1,31 @@
+# @package _global_
+
+defaults:
+  - override /dataset: maze
+  - override /model: gpt
+
+model:
+  num_hidden_layers: 8
+  num_attention_heads: 4
+  hidden_size: 128
+  n_positions: 2048
+  train_mode: ar
+  from_pretrained: False # watch out this overwrites all the other model settings
+  activation_function: relu
+  attn_pdrop: 0
+  resid_pdrop: 0.
+  embd_pdrop: 0.
+  use_rope: True
+
+optim:
+  learning_rate: 0.001
+  warmup_pct: 0.05
+
+datamodule:
+  batch_size: 256
+  grid_n: 3
+  n_mazes: 40000
+
+trainer:
+  check_val_every_n_epoch: 10
+  max_epochs: 300

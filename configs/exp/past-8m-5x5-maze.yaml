@@ -1,0 +1,27 @@
+# @package _global_
+
+defaults:
+  - override /dataset: maze
+  - override /model: past
+
+model:
+  attn_sink: False
+  bias: True
+  dropout: 0
+  n_embd: 128
+  n_head: 4
+  n_layer: 20
+  scale_loss: False
+  stack_enc_dec: True
+  tie_lmhead: True
+  train_mode: absorbing
+  vocab_size: 64
+
+optim:
+  learning_rate: 0.001
+  warmup_pct: 0.05
+
+datamodule:
+  batch_size: 16
+  grid_n: 5
+  n_mazes: 100_000

@@ -1,0 +1,28 @@
+# @package _global_
+
+defaults:
+  - override /hydra/launcher: submitit_slurm
+
+gpus: 8
+nodes: 1
+use_wandb: True
+
+trainer:
+  devices: ${gpus}
+  num_nodes: ${nodes}
+  default_root_dir: ${logs_dir}
+  accelerator: "gpu"
+  num_sanity_val_steps: 0
+
+hydra:
+  launcher:
+    gpus_per_node: ${gpus}
+    tasks_per_node: ${gpus}
+    cpus_per_task: 8
+    mem_gb: 120
+    nodes: ${nodes}
+    timeout_min: 4320
+    max_num_timeout: 5
+    partition: learnlab # devlab, learnlab
+    constraint: volta32gb # ampere, null
+    comment: ${project}

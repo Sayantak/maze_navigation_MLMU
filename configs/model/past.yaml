@@ -1,0 +1,15 @@
+# @package _global_
+model_name : past_${model.train_mode}
+
+model:
+  _target_: recipe.models.PASTPL
+  train_mode: absorbing
+  n_layer: 4
+  n_head: 4
+  n_embd: 256
+  dropout: 0.
+  bias: True
+  tie_lmhead: True
+  attn_sink: False
+  stack_enc_dec: True
+  scale_loss: False

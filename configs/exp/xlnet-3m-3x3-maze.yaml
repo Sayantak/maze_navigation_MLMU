@@ -1,0 +1,25 @@
+# @package _global_
+
+defaults:
+  - override /dataset: maze
+  - override /model: xlnet
+
+model:
+  n_layer: 4
+  n_head: 4
+  d_model: 96
+  train_mode: ar
+  n_positions: 2048
+
+optim:
+  learning_rate: 0.001
+  warmup_pct: 0.05
+
+datamodule:
+  batch_size: 256
+  grid_n: 3
+  n_mazes: 40000
+
+trainer:
+  check_val_every_n_epoch: 10
+  max_epochs: 300

@@ -1,0 +1,20 @@
+# @package _global_
+model_name : gpt_${model.train_mode}_d${model.num_hidden_layers}
+
+model:
+  _target_: recipe.models.GPT2PL
+  num_hidden_layers: 4
+  num_attention_heads: 4
+  hidden_size: 256
+  n_positions: 2048
+  train_mode: ar
+  from_pretrained: False # watch out this overwrites all the other model settings
+  activation_function: relu
+  attn_pdrop: 0
+  resid_pdrop: 0.
+  embd_pdrop: 0.
+  use_rope: True
+
+
+optim:
+  learning_rate: 1e-3

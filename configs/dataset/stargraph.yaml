@@ -1,0 +1,22 @@
+# @package _global_
+dataset_name : stargraph
+
+datamodule:
+  _target_: recipe.datasets.StarGraphDataset
+  batch_size: 256
+  num_workers: 8
+  return_prediction_mask: False
+  n_train: 200_000
+  n_val: 20_000
+  degree: 2
+  pathlen: 5
+  num_nodes: 50
+
+
+
+model:
+  vocab_size: 64 
+
+trainer:
+  check_val_every_n_epoch: 1
+  max_epochs: 10_000

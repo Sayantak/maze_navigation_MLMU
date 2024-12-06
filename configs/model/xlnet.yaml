@@ -1,0 +1,10 @@
+# @package _global_
+model_name : xlnet_${model.train_mode}
+
+model:
+  _target_: recipe.models.XLNetPL
+  n_layer: 4
+  n_head: 4
+  d_model: 32
+  train_mode: ar
+  n_positions: 128
