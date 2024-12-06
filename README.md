@@ -1,4 +1,6 @@
-# Code for training MLM-U on mazes (put arxiv link and website here)
+# Code for training MLM-U on mazes ([website](https://facebookresearch.github.io/maze_navigation_MLMU/))
+arxiv link coming soon  
+
 
 ## Installation
 
