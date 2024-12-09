@@ -1,6 +1,7 @@
-# Code for training MLM-U on mazes ([website](https://facebookresearch.github.io/maze_navigation_MLMU/))
-arxiv link coming soon  
+# Code for Paper "Transformers can navigate mazes with Multi-Step Prediction"
 
+[![arXiv](https://img.shields.io/badge/arXiv-2412.05117-red.svg)](https://arxiv.org/abs/2412.05117)
+[![deploy](https://img.shields.io/badge/Website%20%20-8A2BE2)](https://facebookresearch.github.io/maze_navigation_MLMU/)
 
 ## Installation
 
