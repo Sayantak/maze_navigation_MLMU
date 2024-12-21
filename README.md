@@ -6,12 +6,11 @@
 ## Installation
 
 1. Install PyTorch
-2. `pip install pytest submitit hydra-core hydra-submitit-launcher loguru tqdm gitpython transformers lightning matplotlib datasets sortedcontainers maze-dataset pymongo numpy`
-3. `pip install -e .`
+2. `pip install pytest submitit hydra-core hydra-submitit-launcher loguru tqdm gitpython transformers lightning matplotlib datasets sortedcontainers maze-dataset pymongo numpy maze-dataset`
 ### If you want to run A* mazes (from https://github.com/facebookresearch/searchformer/)
-4. Install mongodb
-5. Download maze.gz and maze.vocabulary.gz from https://github.com/facebookresearch/searchformer/blob/main/doc/mongodb.md
-6. add those to your mongodb   
+3. Install mongodb
+4. Download maze.gz and maze.vocabulary.gz from https://github.com/facebookresearch/searchformer/blob/main/doc/mongodb.md
+5. add those to your mongodb   
 `mongorestore --gzip --archive=maze.gz`  
 `mongorestore --gzip --archive=maze.vocabulary.gz`
 
