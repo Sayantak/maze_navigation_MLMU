@@ -66,6 +66,8 @@ def main(config: DictConfig) -> None:
             config_optim=config.optim,
             eval_fn=getattr(datamodule, "eval_fn", None),
             tokenizer=datamodule.tokenizer,
+            train_base=train_base,          # Determines whether to start from scratch or load a checkpoint
+            checkpoint_path=resume_ckpt,    # Ensures fine-tuning loads a trained model
         )
         # resume_ckpt = None  # this avoids restarting from the same optimizer state
     else:
@@ -75,20 +77,20 @@ def main(config: DictConfig) -> None:
             config_optim=config.optim,
             eval_fn=getattr(datamodule, "eval_fn", None),
             tokenizer=datamodule.tokenizer,
-            train_base=train_base,  # Pass train_base to let pl_model.py decide
-            checkpoint_path=resume_ckpt,  # Pass the checkpoint path to pl_model.py
+            train_base=train_base,          # Pass train_base to let pl_model.py decide
+            checkpoint_path=resume_ckpt,    # Pass the checkpoint path to pl_model.py
         )
 
     check_model_dataset_consistency(model, datamodule)
 
     # Define ModelCheckpoint Callback to Save Checkpoints
     checkpoint_callback = ModelCheckpoint(
-        dirpath=config.logs_dir,  # Save model checkpoints in logs_dir
+        dirpath=config.logs_dir,            # Save model checkpoints in logs_dir
         filename="{epoch}-{val_loss:.2f}",  # Name based on epoch and validation loss
-        save_top_k=3,  # Keep only the 3 best checkpoints
-        monitor="val_loss",  # Save based on validation loss
-        mode="min",  # Save the lowest validation loss
-        save_last=True,  # Always keep the last checkpoint
+        save_top_k=3,                       # Keep only the 3 best checkpoints
+        monitor="val_loss",                 # Save based on validation loss
+        mode="min",                         # Save the lowest validation loss
+        save_last=True,                     # Always keep the last checkpoint
     )
 
     # print("Config: ", config.trainer)
