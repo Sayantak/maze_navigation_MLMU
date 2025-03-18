@@ -32,20 +32,21 @@ class TokenizedTrace:
 
     * `prompt`: Contains the task prompt sequence.
     * `reasoning`: Contains the execution trace for computing a plan.
-    * `plan`: Contains the optimal solution plan.
+    * `plan`: Contains K solution plans.
     """
 
     id: int
     prompt: List[str]
     reasoning: List[str]
-    plan: List[str]
+    # plan: List[str]
+    plans: List[List[str]]  # Change from a single plan to a list of K plans
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "_id": self.id,
             "prompt": self.prompt,
             "reasoning": self.reasoning,
-            "plan": self.plan,
+            "plans": self.plans,    # Store all K plans
         }
 
     def to_stats_dict(self) -> Dict[str, Any]:
@@ -53,7 +54,8 @@ class TokenizedTrace:
             "_id": self.id,
             "prompt_len": len(self.prompt),
             "reasoning_len": len(self.reasoning),
-            "plan_len": len(self.plan),
+            #"plan_len": len(self.plan),
+            "plans_len": [len(plan) for plan in self.plans],  # Track lengths of each plan
         }
 
     @staticmethod
@@ -63,7 +65,8 @@ class TokenizedTrace:
                 id=d["_id"],
                 prompt=d["prompt"],
                 reasoning=d["reasoning"],
-                plan=d["plan"],
+                # plan=d["plan"],
+                plans=d.get("plans", [[]]),  # Ensure backwards compatibility
             )
         else:
             return TokenizedTrace(**d)
@@ -449,16 +452,25 @@ class DictTokenizer:
         prompt_idx = self.encode(prompt_tok)
 
         if plan_only:
-            trace_tok = ["bos", *trace.plan, "eos"]
+            #trace_tok = ["bos", *trace.plan, "eos"]
+            # Select the first plan as default if multiple exist
+            trace_tok = ["bos", *trace.plans[0], "eos"]
             plan_start = 1
         else:
-            trace_tok = ["bos", *trace.reasoning, *trace.plan, "eos"]
+            #trace_tok = ["bos", *trace.reasoning, *trace.plan, "eos"]
+            # Generate K plans dynamically
+            if hasattr(self, "planner") and self.planner is not None:
+                trace.plans = self.planner.generate_plans(trace.prompt)  # Generate plans
+            trace_tok = ["bos", *trace.reasoning, *trace.plans[0], "eos"]
             plan_start = len(trace.reasoning) + 1
         trace_idx = self.encode(trace_tok)
+        # Convert K plans into tokenized tensor format
+        tokenized_plans = [Tensor(self.encode(["bos", *plan, "eos"])).long() for plan in trace.plans]
         return AStarTrace(
             prompt=Tensor(prompt_idx).long(),
             trace_plan=Tensor(trace_idx).long(),
             plan_start=plan_start,
+            plans=tokenized_plans,  # Store all K plans as tensors
         )
 
     def tokenize_batch(

@@ -1,6 +1,9 @@
 # @package _global_
 gpus: 1
 use_wandb: False
+accelerator: "gpu"
+# New arguments for controlling training behavior
+train_base: True  # If True, train base GPT-2. If False, fine-tune with adapter.
 trainer:
   devices: ${gpus}
   default_root_dir: ${logs_dir}

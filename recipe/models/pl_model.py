@@ -10,6 +10,7 @@ from transformers import XLNetConfig, BitsAndBytesConfig
 from .xlnet_wrapper import XLNetCustom
 from .gpt_wrapper import GPT2Custom, GPT2Config
 from .past import PASTConfig, PAST
+from .planning import TokenPlanner, TokenSampleAdapter
 import torch
 import math
 
@@ -174,28 +175,118 @@ class GPT2PL(PLModel):
         eval_fn=None,
         config_optim=None,
         tokenizer=None,
+        planner=None,  # New argument for the planner
         from_pretrained=False,
+        train_base=True,
+        checkpoint_path=None,
         **model_kwargs,
     ) -> None:
         super().__init__(eval_fn=eval_fn, config_optim=config_optim, **model_kwargs)
-        if from_pretrained:
-            print("loading from pretrained, ignoring rest of config.")
-            self.model = GPT2Custom.from_pretrained("openai-community/gpt2")
-        else:
-            if tokenizer is not None:
-                model_kwargs["vocab_size"] = tokenizer.vocab_size
-            model_kwargs.update(
-                vocab_size=nearest_multiple(tokenizer.vocab_size),
-                bos_token_id=tokenizer.bos_token_id,
-                eos_token_id=tokenizer.eos_token_id,
-                pad_token_id=tokenizer.pad_token_id,
-            )
-            model_config = GPT2Config(
-                **model_kwargs,
-            )
-            self.model = GPT2Custom(model_config)
-            self.model.apply(self.model._init_weights)
 
+        # region Debugging
+        # # If a custom tokenizer is given, replace it with a Hugging Face tokenizer
+        # if not isinstance(tokenizer, GPT2Tokenizer):
+        #     print("Converting custom tokenizer to a Hugging Face GPT-2 tokenizer")
+        #     tokenizer = GPT2Tokenizer.from_pretrained("openai-community/gpt2")
+
+        # self.tokenizer = tokenizer  # Now using a Hugging Face tokenizer
+
+        # self.model = GPT2Custom.from_pretrained("openai-community/gpt2")
+        # endregion
+        if checkpoint_path and not train_base:
+            # Load from checkpoint
+            print(f"Loading model from checkpoint: {checkpoint_path}")
+            self.model = GPT2PL.load_from_checkpoint(
+                checkpoint_path,
+                config_optim=config_optim,
+                eval_fn=eval_fn,
+                tokenizer=tokenizer,
+            ).model
+        else:
+            if from_pretrained:
+                print("Loading from pretrained, ignoring rest of config.")
+                self.model = GPT2Custom.from_pretrained("openai-community/gpt2")
+            else:
+                print("Model inititalisation according to config.")
+                if tokenizer is not None:
+                    model_kwargs["vocab_size"] = tokenizer.vocab_size
+                model_kwargs.update(
+                    vocab_size=nearest_multiple(tokenizer.vocab_size),
+                    bos_token_id=tokenizer.bos_token_id,
+                    eos_token_id=tokenizer.eos_token_id,
+                    pad_token_id=tokenizer.pad_token_id,
+                )
+                model_config = GPT2Config(
+                    **model_kwargs,
+                )
+                self.model = GPT2Custom(model_config)
+                self.model.apply(self.model._init_weights)
+
+        # Conditionally initialize planner and adapter
+        if not train_base:
+            # Initialize TokenPlanner if no planner is provided
+            print("Attaching TokenSampleAdapter for fine-tuning")
+            if planner is None:
+                self.adapter = TokenSampleAdapter(  # Use TokenSampleAdapter
+                    hidden_size=self.model.config.hidden_size,
+                    vocab_size=self.model.config.vocab_size,
+                    pad_token_id=tokenizer.pad_token_id if tokenizer else None
+                )
+
+                # Freeze GPT-2 parameters
+                for param in self.model.parameters():
+                    param.requires_grad = False  # Prevent GPT-2 from updating
+                # Ensure PyTorch does not update the model
+                self.model.training = False  # Explicitly set training mode to False
+                self.model.eval()  # Ensure model is in eval mode
+
+                for name, param in self.model.named_parameters():
+                    if name.startswith("plan_adapter"):
+                        param.requires_grad = True  # Allow adapter to update
+
+                self.planner = TokenPlanner(
+                    model=self.model,           # Pass the model
+                    adapter=self.adapter,       # Adapter can be set up separately if needed
+                    tokenizer=tokenizer,
+                    config=self.model.config,   # Ensure config matches model
+                )
+
+                #region Debugging
+                # print("Checking trainable parameters in GPT-2:")
+                # for name, param in self.model.named_parameters():
+                #     print(f"{name}: requires_grad={param.requires_grad}")
+
+                # print("\nChecking trainable parameters in Adapter:")
+                # if hasattr(self, "adapter"):
+                #     for name, param in self.adapter.named_parameters():
+                #         print(f"{name}: requires_grad={param.requires_grad}")
+                #endregion
+            else:
+                self.planner = planner  # Use the provided planner
+
+        else:
+            print("Training base GPT-2 without adapter")
+            self.planner = None # No planner for base model
+
+    def forward(self, batch, **model_kwargs):
+        # Generate plans using the planner only if fine-tuning
+        if self.planner is not None:
+            # print("Forward pass is reached")
+            plans = self.planner.forward(
+                prompts=batch["input_ids"], 
+                prompt_masks=batch["attention_mask"], 
+                split_index=batch["input_ids"].shape[1] - 1,  # Set split index to last token
+                num_samples=5,  # Number of plans to generate (K)
+                continuation_length=10  # Length of each generated plan
+            )
+            batch["plans"] = plans  # Inject plans into the batch
+        
+        out = self.model(
+            **batch,
+            mode=self.train_mode,
+            **model_kwargs,
+        )
+        return out
 
 class MistralPL(PLModel):
     def __init__(

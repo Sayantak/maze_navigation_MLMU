@@ -16,7 +16,8 @@ project: mlmu
 note: ""
 name: ${note}${model_name}-${dataset_name}-lr${optim.learning_rate}
 # TODO change logs_dir this to where you want your logs stored (includes checkpoints)
-logs_dir: /checkpoint/${oc.env:USER}/logs/${project}/${name}/${now:%Y-%m-%d_%H-%M-%S}
+# logs_dir: /checkpoint/${oc.env:USER}/logs/${project}/${name}/${now:%Y-%m-%d_%H-%M-%S}
+logs_dir: /checkpoint/sayan/logs/${project}/${name}/${now:%Y-%m-%d_%H-%M-%S}
 resume: True
 seed: 42
 debug: False
@@ -30,7 +31,7 @@ hydra:
     env_set:
       NCCL_P2P_DISABLE: 1
       # TODO change this to the place you would like your data saved
-      DATA_ROOT: /checkpoint/nolte/knowledge 
+      DATA_ROOT: /checkpoint/sayan/knowledge 
   run:
     dir: ${logs_dir}
   sweep:

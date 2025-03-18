@@ -5,12 +5,32 @@ This source code is licensed under the license found in the
 LICENSE file in the root directory of this source tree.
 """
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss
 from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
 from transformers import GPT2LMHeadModel, GPT2Config
 
+class PlanAdapter(nn.Module):
+    """Handles integration of forward predictions (plans) into the model's hidden states."""
+    def __init__(self, hidden_size):
+        super().__init__()
+        self.plan_projection = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.scale = nn.Parameter(torch.tensor(1.0))
+
+    def forward(self, plans, hidden_states):
+        if plans is not None and plans.nelement() > 0:
+            # print("Processing plans")
+            processed_plans = self.plan_projection(plans)
+            if processed_plans.shape != hidden_states.shape:
+                processed_plans = torch.zeros_like(hidden_states)  # No influence if shape mismatch
+            return self.scale * processed_plans + hidden_states
+        return hidden_states
+
 class GPT2Custom(GPT2LMHeadModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.plan_adapter = PlanAdapter(config.n_embd)
     def forward(
         self,
         input_ids=None,
@@ -29,6 +49,7 @@ class GPT2Custom(GPT2LMHeadModel):
         output_hidden_states=None,
         return_dict=None,
         prediction_mask=None,
+        plans=None,  # New argument for forward predictions
         **kwargs,
     ):
         r"""
@@ -45,6 +66,8 @@ class GPT2Custom(GPT2LMHeadModel):
             "absorbing",
             "all_but_last",
         ], f"mode {mode} unrecognized, must be either 'ar'"
+
+        # print("In GPT2Custom forward")
 
         if attention_mask is None:
             attention_mask = torch.ones_like(input_ids)
@@ -101,6 +124,9 @@ class GPT2Custom(GPT2LMHeadModel):
         )
         hidden_states = transformer_outputs[0]
 
+        # Integrate forward-generated plans using the PlanAdapter
+        hidden_states = self.plan_adapter(plans, hidden_states)
+
         # Set device for model parallelism
         if self.model_parallel:
             torch.cuda.set_device(self.transformer.first_device)
@@ -113,6 +139,7 @@ class GPT2Custom(GPT2LMHeadModel):
             # set labels to -100 where we don't need to predict
             labels = labels.masked_fill(~prediction_mask, -100)
             loss_fct = CrossEntropyLoss()
+            
             if mode == "ar":
                 # Shift so that tokens < n predict n
                 shift_logits = lm_logits[..., :-1, :].contiguous()
@@ -126,6 +153,7 @@ class GPT2Custom(GPT2LMHeadModel):
                 loss = loss_fct(
                     lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1)
                 )
+            # print("Loss: ", loss)
 
                 
 
@@ -141,3 +169,36 @@ class GPT2Custom(GPT2LMHeadModel):
             attentions=transformer_outputs.attentions,
             cross_attentions=transformer_outputs.cross_attentions,
         )
+    def prepare_inputs_for_generation(self, input_ids, past_key_values=None, plans=None, **kwargs):
+        token_type_ids = kwargs.get("token_type_ids", None)
+        if past_key_values:
+            input_ids = input_ids[:, -1].unsqueeze(-1)
+            if token_type_ids is not None:
+                token_type_ids = token_type_ids[:, -1].unsqueeze(-1)
+
+        attention_mask = kwargs.get("attention_mask", None)
+        position_ids = kwargs.get("position_ids", None)
+
+        if attention_mask is not None and position_ids is None:
+            position_ids = attention_mask.long().cumsum(-1) - 1
+            position_ids.masked_fill_(attention_mask == 0, 1)
+            if past_key_values:
+                position_ids = position_ids[:, -1].unsqueeze(-1)
+        else:
+            position_ids = None
+
+        # Handle plans during generation
+        plans = kwargs.get("plans", None)
+        if plans is not None and past_key_values:
+            plans = plans[:, input_ids.size(1)-1:input_ids.size(1), :]
+
+        return {
+            "input_ids": input_ids,
+            "past_key_values": past_key_values,
+            "use_cache": kwargs.get("use_cache"),
+            "position_ids": position_ids,
+            "attention_mask": attention_mask,
+            "token_type_ids": token_type_ids,
+            "plans": plans,
+        }
+    

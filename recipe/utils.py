@@ -62,6 +62,13 @@ def check_model_dataset_consistency(model, datamodule):
         if hasattr(datamodule, "vocab_size"):
             msg = f"vocab mismatch {datamodule.vocab_size} vs {modelcfg.vocab_size}"
             assert datamodule.vocab_size <= modelcfg.vocab_size, msg
+    # NEW: Ensure the dataset provides K plans if the model expects them
+    if hasattr(datamodule, "provides_plans") and hasattr(modelcfg, "expects_plans"):
+        assert datamodule.provides_plans == modelcfg.expects_plans, (
+            f"Dataset provides_plans={datamodule.provides_plans}, "
+            f"but model expects_plans={modelcfg.expects_plans}. "
+            "Ensure both are aligned."
+        )
 
 
 def commit_hash(output_file, script_file):

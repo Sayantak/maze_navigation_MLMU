@@ -139,7 +139,8 @@ class RotaryPositionalEmbeddings(nn.Module):
         # Calculate $[-x^{(\frac{d}{2} + 1)}, -x^{(\frac{d}{2} + 2)}, ..., -x^{(d)}, x^{(1)}, x^{(2)}, ..., x^{(\frac{d}{2})}]$
         return torch.cat([-x[..., d_2:], x[..., :d_2]], dim=-1)
 
-    @torch.cuda.amp.autocast(enabled=False)
+    # @torch.cuda.amp.autocast(enabled=False)
+    torch.amp.autocast('cuda', enabled=False)
     def forward(self, x: torch.Tensor):
         """
         * `x` is the Tensor at the head of a key or a query with shape `[batch_size, n_heads, seq_len, d]`

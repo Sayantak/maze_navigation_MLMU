@@ -107,6 +107,7 @@ class AstarMazeDataset(LightningDataModule, AbstractDataset):
         grid_n=3,
         n_mazes=4,
         return_prediction_mask=True,
+        planner=None,  # Add planner
         seed=42,
         **abstract_kwargs,
     ):
@@ -116,6 +117,7 @@ class AstarMazeDataset(LightningDataModule, AbstractDataset):
         self.grid_n = grid_n
         self.n_mazes = n_mazes
         self.seed = seed
+        self.planner = planner # Store planner reference
 
         dataroot = get_data_root()
         self.path = os.path.join(dataroot, "astarmaze_dataset")
@@ -221,6 +223,9 @@ class AstarMazeDataset(LightningDataModule, AbstractDataset):
         _, prefix_attn = self._eval_get_prefix(batch_dict)
         if self.return_prediction_mask:
             batch_dict["prediction_mask"] = attn - prefix_attn
+        # Generate plans using the planner and include them
+        if hasattr(self, "planner") and self.planner is not None:
+            batch_dict["plans"] = self.planner(batch_dict["input_ids"], batch_dict["attention_mask"])
         return batch_dict
 
     def eval_fn(
