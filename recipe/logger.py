@@ -68,6 +68,7 @@ def log_internet_status() -> str:
 def setup_wandb(
     config: DictConfig, log: logging.Logger, git_hash: str = "",
     resume_ckpt: Optional[str] = None,
+    is_direct_ckpt: bool = False  # New parameter to indicate direct checkpoint path
 ) -> Optional["WandbLogger"]:
     from pytorch_lightning.loggers import WandbLogger
     import wandb
@@ -84,13 +85,22 @@ def setup_wandb(
     config_dict["job_logs_dir"] = job_logs_dir
     config_dict["git_hash"] = git_hash
     code_dir = os.path.dirname(os.path.dirname(__file__))
-    wandb_id = find_run_wandb_id(resume_ckpt)
+    
+    # If it's a direct checkpoint, start a new run instead of trying to resume
+    if is_direct_ckpt:
+        logger.info("Using direct checkpoint path - starting fresh WandB run")
+        wandb_id = None
+        resume_option = None
+    else:
+        wandb_id = find_run_wandb_id(resume_ckpt)
+        resume_option = "must" if resume_ckpt else None
+    
     get_logger = lambda: WandbLogger(
         config=config_dict,
         settings=wandb.Settings(code_dir=code_dir, start_method="fork"),
         name=config.name,
         id=wandb_id,
-        resume="must" if resume_ckpt else None,
+        resume=resume_option,
         **config.wandb,
     )
     try:
@@ -119,6 +129,12 @@ def find_existing_checkpoint(dirpath: str, verbose: bool = False, resume_index=-
     """Searches dirpath for an existing model checkpoint.
     If found, returns its path.
     """
+    # If dirpath is already a checkpoint file, return it directly
+    if dirpath and os.path.isfile(dirpath) and dirpath.endswith('.ckpt'):
+        if verbose:
+            logger.info(f"Using specified checkpoint: {dirpath}")
+        return dirpath
+        
     ckpts = list(Path(dirpath).rglob("*.ckpt"))
     # some paths are symlinks and need to be resolved
     resolved = [p.resolve() for p in ckpts]
@@ -128,6 +144,8 @@ def find_existing_checkpoint(dirpath: str, verbose: bool = False, resume_index=-
         "/".join(str(p).split("/")[:-1] + [str(r).split("/")[-1]])
         for p, r in zip(ckpts, resolved)
     ]
+
+    print(f"ckpts: {ckpts}")
     ckpts = sorted(ckpts, key=os.path.getctime)
     if ckpts:
         ckpt = str(ckpts[resume_index])

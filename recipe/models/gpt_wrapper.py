@@ -24,6 +24,9 @@ class PlanAdapter(nn.Module):
             processed_plans = self.plan_projection(plans)
             if processed_plans.shape != hidden_states.shape:
                 processed_plans = torch.zeros_like(hidden_states)  # No influence if shape mismatch
+            # Print the weight matrix of the plan projection layer
+            print("Plan projection weights:")
+            print(self.plan_projection.weight)
             return self.scale * processed_plans + hidden_states
         return hidden_states
 

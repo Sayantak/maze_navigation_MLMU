@@ -109,7 +109,11 @@ class PLModel(LightningModule):
         weight_decay = self.config_optim.weight_decay
         learning_rate = self.config_optim.learning_rate
         betas = self.config_optim.betas
-        param_dict = {pn: p for pn, p in self.named_parameters() if p.requires_grad}
+        param_dict = {}
+        for pn, p in self.named_parameters():
+            if p.requires_grad:
+                param_dict[pn] = p
+                print(f"Adding trainable parameter: {pn} with shape {p.shape}")
         # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
         # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
         decay_params = [p for p in param_dict.values() if p.dim() >= 2]
@@ -182,17 +186,9 @@ class GPT2PL(PLModel):
         **model_kwargs,
     ) -> None:
         super().__init__(eval_fn=eval_fn, config_optim=config_optim, **model_kwargs)
-
-        # region Debugging
-        # # If a custom tokenizer is given, replace it with a Hugging Face tokenizer
-        # if not isinstance(tokenizer, GPT2Tokenizer):
-        #     print("Converting custom tokenizer to a Hugging Face GPT-2 tokenizer")
-        #     tokenizer = GPT2Tokenizer.from_pretrained("openai-community/gpt2")
-
-        # self.tokenizer = tokenizer  # Now using a Hugging Face tokenizer
-
-        # self.model = GPT2Custom.from_pretrained("openai-community/gpt2")
-        # endregion
+        self.batch_counter = 0  # Add a counter to track batches
+        self.printed_initial_weights = False
+        
         if checkpoint_path and not train_base:
             # Load from checkpoint
             print(f"Loading model from checkpoint: {checkpoint_path}")
@@ -227,11 +223,17 @@ class GPT2PL(PLModel):
             # Initialize TokenPlanner if no planner is provided
             print("Attaching TokenSampleAdapter for fine-tuning")
             if planner is None:
-                self.adapter = TokenSampleAdapter(  # Use TokenSampleAdapter
+                # Critical fix: properly register adapter as a PyTorch module
+                self.adapter = TokenSampleAdapter(
                     hidden_size=self.model.config.hidden_size,
                     vocab_size=self.model.config.vocab_size,
                     pad_token_id=tokenizer.pad_token_id if tokenizer else None
                 )
+                
+                # Double-check that adapter params require gradients
+                for name, param in self.adapter.named_parameters():
+                    param.requires_grad = True
+                    print(f"Setting adapter param {name} requires_grad=True")
 
                 # Freeze GPT-2 parameters
                 for param in self.model.parameters():
@@ -250,32 +252,61 @@ class GPT2PL(PLModel):
                     tokenizer=tokenizer,
                     config=self.model.config,   # Ensure config matches model
                 )
-
-                #region Debugging
-                # print("Checking trainable parameters in GPT-2:")
-                # for name, param in self.model.named_parameters():
-                #     print(f"{name}: requires_grad={param.requires_grad}")
-
-                # print("\nChecking trainable parameters in Adapter:")
-                # if hasattr(self, "adapter"):
-                #     for name, param in self.adapter.named_parameters():
-                #         print(f"{name}: requires_grad={param.requires_grad}")
-                #endregion
+                
+                # Print summary of parameters
+                print("\n===== Parameter Status After Setup =====")
+                for name, param in self.named_parameters():
+                    if param.requires_grad:
+                        print(f"Will train: {name}, shape: {param.shape}")
+                print("=======================================\n")
             else:
-                self.planner = planner  # Use the provided planner
-
+                self.planner = planner
+                self.add_module('planner', self.planner)
         else:
             print("Training base GPT-2 without adapter")
             self.planner = None # No planner for base model
 
     def forward(self, batch, **model_kwargs):
+        # Print adapter weights at the start and periodically during training
+        if not self.printed_initial_weights and hasattr(self, 'adapter'):
+            # Find the first weight matrix in the adapter
+            for name, param in self.adapter.named_parameters():
+                if 'weight' in name and param.dim() == 2:  # Find a 2D weight matrix
+                    # Print a small sample of the weights (first 5x5 elements)
+                    weight_sample = param[:5, :5].detach().cpu().numpy()
+                    print(f"\n========== INITIAL ADAPTER WEIGHTS ({name}) ==========")
+                    print(weight_sample)
+                    print("==========================================================\n")
+                    # Store this parameter for later comparison
+                    self.monitored_param_name = name
+                    self.monitored_param = param
+                    self.printed_initial_weights = True
+                    break
+        
+        # Periodically print the weights again to see if they're changing
+        if hasattr(self, 'monitored_param') and self.training:
+            self.batch_counter += 1
+            if self.batch_counter % 10 == 0:  # Every 10 batches
+                weight_sample = self.monitored_param[:5, :5].detach().cpu().numpy()
+                print(f"\n========== ADAPTER WEIGHTS AFTER {self.batch_counter} BATCHES ==========")
+                print(weight_sample)
+                print("================================================================\n")
+        
         # Generate plans using the planner only if fine-tuning
         if self.planner is not None:
             # print("Forward pass is reached")
+            # Sample split index randomly between 2 and max sequence length
+            max_idx = batch["input_ids"].shape[1] - 1
+            split_idx = torch.randint(2, max_idx, (1,)).item()
+
+            # Split prompts at the split index
+            prompts = batch["input_ids"][:, :split_idx]
+            prompt_masks = batch["attention_mask"][:, :split_idx]
+
             plans = self.planner.forward(
-                prompts=batch["input_ids"], 
-                prompt_masks=batch["attention_mask"], 
-                split_index=batch["input_ids"].shape[1] - 1,  # Set split index to last token
+                prompts=prompts,
+                prompt_masks=prompt_masks, 
+                split_index=split_idx,  # Randomly sampled split index
                 num_samples=5,  # Number of plans to generate (K)
                 continuation_length=10  # Length of each generated plan
             )
