@@ -4,6 +4,8 @@ use_wandb: False
 accelerator: "gpu"
 # New arguments for controlling training behavior
 train_base: True  # If True, train base GPT-2. If False, fine-tune with adapter.
+num_samples: 5
+continuation_length: 10  
 trainer:
   devices: ${gpus}
   default_root_dir: ${logs_dir}

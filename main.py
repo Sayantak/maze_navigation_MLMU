@@ -39,6 +39,8 @@ def main(config: DictConfig) -> None:
     
     # Read training mode from Hydra config
     train_base = config.train_base  # Train base model without adapter?
+    num_samples = config.num_samples
+    continuation_length = config.continuation_length
 
     # Resume training from the latest checkpoint if available
     if config.resume:
@@ -60,6 +62,7 @@ def main(config: DictConfig) -> None:
     # meant to be used for a model that finished training
 
     if isinstance(config.resume, str):
+        
         model_class = get_class(config.model._target_)
         model = model_class.load_from_checkpoint(
             resume_ckpt,
@@ -68,6 +71,8 @@ def main(config: DictConfig) -> None:
             tokenizer=datamodule.tokenizer,
             train_base=train_base,          # Determines whether to start from scratch or load a checkpoint
             checkpoint_path=resume_ckpt,    # Ensures fine-tuning loads a trained model
+            num_samples=num_samples,
+            continuation_length=continuation_length,
         )
         # resume_ckpt = None  # this avoids restarting from the same optimizer state
     else:
@@ -79,6 +84,8 @@ def main(config: DictConfig) -> None:
             tokenizer=datamodule.tokenizer,
             train_base=train_base,          # Pass train_base to let pl_model.py decide
             checkpoint_path=resume_ckpt,    # Pass the checkpoint path to pl_model.py
+            num_samples=num_samples,
+            continuation_length=continuation_length,
         )
 
     check_model_dataset_consistency(model, datamodule)

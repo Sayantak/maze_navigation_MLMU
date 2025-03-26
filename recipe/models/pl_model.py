@@ -179,6 +179,8 @@ class GPT2PL(PLModel):
         from_pretrained=False,
         train_base=True,
         checkpoint_path=None,
+        num_samples=5,
+        continuation_length=10,
         **model_kwargs,
     ) -> None:
         super().__init__(eval_fn=eval_fn, config_optim=config_optim, **model_kwargs)
@@ -250,7 +252,8 @@ class GPT2PL(PLModel):
                     tokenizer=tokenizer,
                     config=self.model.config,   # Ensure config matches model
                 )
-
+                self.num_samples = num_samples
+                self.continuation_length = continuation_length
                 #region Debugging
                 # print("Checking trainable parameters in GPT-2:")
                 # for name, param in self.model.named_parameters():
@@ -276,8 +279,8 @@ class GPT2PL(PLModel):
                 prompts=batch["input_ids"], 
                 prompt_masks=batch["attention_mask"], 
                 split_index=batch["input_ids"].shape[1] - 1,  # Set split index to last token
-                num_samples=5,  # Number of plans to generate (K)
-                continuation_length=10  # Length of each generated plan
+                num_samples=self.num_samples,  # Number of plans to generate (K)
+                continuation_length=self.continuation_length  # Length of each generated plan
             )
             batch["plans"] = plans  # Inject plans into the batch
         
