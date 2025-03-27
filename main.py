@@ -22,7 +22,7 @@ import shutil
 
 
 log = logging.getLogger(__name__)
-git_hash = get_git_hash()
+# git_hash = get_git_hash()
 
 # import torch
 # torch.set_float32_matmul_precision('medium')
@@ -39,6 +39,8 @@ def main(config: DictConfig) -> None:
     
     # Read training mode from Hydra config
     train_base = config.train_base  # Train base model without adapter?
+    num_samples = config.num_samples
+    continuation_length = config.continuation_length
 
     # Check for direct checkpoint path 
     is_direct_ckpt = False
@@ -62,8 +64,8 @@ def main(config: DictConfig) -> None:
         resume_ckpt = find_existing_checkpoint(run_path, verbose=True) if not train_base else None
     
     # Setup Weights and Biases with the direct checkpoint flag
-    wandb_logger = setup_wandb(config, log, git_hash, resume_ckpt, is_direct_ckpt)
-    #wandb_logger = None
+    # wandb_logger = setup_wandb(config, log, git_hash, resume_ckpt, is_direct_ckpt)
+    wandb_logger = None
 
     datamodule = instantiate(config.datamodule)
     
@@ -75,6 +77,8 @@ def main(config: DictConfig) -> None:
         tokenizer=datamodule.tokenizer,
         train_base=train_base,
         checkpoint_path=None,  # Don't load checkpoint here
+        num_samples=num_samples,
+        continuation_length=continuation_length
     )
 
     check_model_dataset_consistency(model, datamodule)
@@ -168,7 +172,7 @@ if __name__ == "__main__":
     # TODO change base_dir: a snapshot of the code will be made when you run it,
     # such that a slurm requeue (via hydra/submitit) can pick up from the code snapshot.
     # therefore, make sure that this directory is visible from a shared location within your slurm cluster.
-    base_dir = f"/home/fmai/checkpoint/" 
+    base_dir = f"/home/sayan/checkpoint/" 
     os.makedirs(base_dir, exist_ok=True)
     snapshot_dir = tempfile.mkdtemp(prefix=base_dir)
     print("Snapshot dir is: ", snapshot_dir)

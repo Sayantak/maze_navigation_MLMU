@@ -23,12 +23,19 @@ class PlanAdapter(nn.Module):
             # print("Processing plans")
             processed_plans = self.plan_projection(plans)
             if processed_plans.shape != hidden_states.shape:
+                print("Inside IF")
                 processed_plans = torch.zeros_like(hidden_states)  # No influence if shape mismatch
             # Print the weight matrix of the plan projection layer
             print("Plan projection weights:")
             print(self.plan_projection.weight)
             return self.scale * processed_plans + hidden_states
         return hidden_states
+    
+    def on_after_backward(self):
+        if hasattr(self, "adapter"):
+            print("\n======Plan Adapter gradients after backward=======")
+            for name, param in self.named_parameters():
+                print(f"{name} | grad: {param.grad is not None} | grad norm: {param.grad.norm().item() if param.grad is not None else 'N/A'}")
 
 class GPT2Custom(GPT2LMHeadModel):
     def __init__(self, config):

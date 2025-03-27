@@ -183,6 +183,8 @@ class GPT2PL(PLModel):
         from_pretrained=False,
         train_base=True,
         checkpoint_path=None,
+        num_samples=5,
+        continuation_length=10,
         **model_kwargs,
     ) -> None:
         super().__init__(eval_fn=eval_fn, config_optim=config_optim, **model_kwargs)
@@ -252,6 +254,8 @@ class GPT2PL(PLModel):
                     tokenizer=tokenizer,
                     config=self.model.config,   # Ensure config matches model
                 )
+                self.num_samples = num_samples
+                self.continuation_length = continuation_length
                 
                 # Print summary of parameters
                 print("\n===== Parameter Status After Setup =====")
@@ -282,11 +286,16 @@ class GPT2PL(PLModel):
                     self.monitored_param = param
                     self.printed_initial_weights = True
                     break
-        
+
+        print("\n======Checking adapter parameters and gradients:=======")
+        for name, param in self.adapter.named_parameters():
+            print(f"{name} | requires_grad={param.requires_grad} | grad_fn={param.grad_fn} | grad={(param.grad is not None)}")
+        print("==========================================================\n")
+
         # Periodically print the weights again to see if they're changing
         if hasattr(self, 'monitored_param') and self.training:
             self.batch_counter += 1
-            if self.batch_counter % 10 == 0:  # Every 10 batches
+            if self.batch_counter % 2 == 0:  # Every 10 batches
                 weight_sample = self.monitored_param[:5, :5].detach().cpu().numpy()
                 print(f"\n========== ADAPTER WEIGHTS AFTER {self.batch_counter} BATCHES ==========")
                 print(weight_sample)
@@ -294,6 +303,8 @@ class GPT2PL(PLModel):
         
         # Generate plans using the planner only if fine-tuning
         if self.planner is not None:
+            # print("num_samples: ", self.num_samples)
+            # print("continuation_length: ", self.continuation_length)
             # print("Forward pass is reached")
             # Sample split index randomly between 2 and max sequence length
             max_idx = batch["input_ids"].shape[1] - 1
@@ -307,8 +318,8 @@ class GPT2PL(PLModel):
                 prompts=prompts,
                 prompt_masks=prompt_masks, 
                 split_index=split_idx,  # Randomly sampled split index
-                num_samples=5,  # Number of plans to generate (K)
-                continuation_length=10  # Length of each generated plan
+                num_samples=self.num_samples,  # Number of plans to generate (K)
+                continuation_length=self.continuation_length  # Length of each generated plan
             )
             batch["plans"] = plans  # Inject plans into the batch
         
@@ -318,6 +329,16 @@ class GPT2PL(PLModel):
             **model_kwargs,
         )
         return out
+
+    def on_after_backward(self):
+        if hasattr(self, "adapter"):
+            print("\n======Adapter gradients after backward=======")
+            for name, param in self.adapter.named_parameters():
+                print(f"{name} | grad: {param.grad is not None} | grad norm: {param.grad.norm().item() if param.grad is not None else 'N/A'}")
+        if hasattr(self, "model"):
+            print("\n======Plan Adapter gradients after backward=======")
+            for name, param in self.model.named_parameters():
+                print(f"{name} | grad: {param.grad is not None} | grad norm: {param.grad.norm().item() if param.grad is not None else 'N/A'}")
 
 class MistralPL(PLModel):
     def __init__(
