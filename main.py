@@ -5,7 +5,7 @@ This source code is licensed under the license found in the
 LICENSE file in the root directory of this source tree.
 """
 import hydra
-from submitit.helpers import RsyncSnapshot
+# from submitit.helpers import RsyncSnapshot # Keep if using the Linux Rsync version later
 from hydra.utils import instantiate, get_class
 from omegaconf import DictConfig, OmegaConf
 from loguru import logger
@@ -22,10 +22,13 @@ import shutil
 
 
 log = logging.getLogger(__name__)
-# git_hash = get_git_hash()
+git_hash = get_git_hash()
 
 # import torch
 # torch.set_float32_matmul_precision('medium')
+
+# Store the original root directory before Hydra potentially changes it
+original_root_dir = os.getcwd()
 
 @hydra.main(
     version_base="1.2",
@@ -33,173 +36,209 @@ log = logging.getLogger(__name__)
     config_name="train_defaults.yaml",
 )
 def main(config: DictConfig) -> None:
-    logger.info(OmegaConf.to_yaml(config))
-    logger.info(f"saving logs, configs, and model checkpoints to {config.logs_dir}")
-    seed_everything(config.seed, workers=True)
-    
-    # Read training mode from Hydra config
-    train_base = config.train_base  # Train base model without adapter?
-    num_samples = config.num_samples
-    continuation_length = config.continuation_length
+    # --- Snapshot logic moved here ---
+    # Use original_root_dir captured before Hydra's potential chdir
+    root = original_root_dir
+    print("Original Root is: ", root)
 
-    # Check for direct checkpoint path 
-    is_direct_ckpt = False
-    resume_ckpt = None
-    if hasattr(config, 'ckpt_path') and config.ckpt_path:
-        # User has specified a direct path to a checkpoint
-        if os.path.isfile(config.ckpt_path) and config.ckpt_path.endswith('.ckpt'):
-            resume_ckpt = config.ckpt_path
-            is_direct_ckpt = True  # Flag this as a direct checkpoint
-            logger.info(f"Using specified checkpoint: {resume_ckpt}")
+    # Get base_dir from Hydra config
+    base_dir = config.get("base_dir", "/tmp/mlmu_snapshots") # Use get with a default
+    os.makedirs(base_dir, exist_ok=True)
+    # Use a temporary directory within the configured base_dir
+    snapshot_dir = tempfile.mkdtemp(prefix=os.path.join(base_dir, "snapshot_"))
+    print("Snapshot dir is: ", snapshot_dir)
+
+    try:
+        # Copy the current directory (which might have been changed by Hydra's chdir=True)
+        # to the snapshot directory. We copy from the *original* root.
+        if os.path.exists(root):
+             print(f"Copying from {root} to {snapshot_dir}")
+             # Using shutil.copytree, ensure target doesn't exist or use dirs_exist_ok=True (Python 3.8+)
+             if os.path.exists(snapshot_dir):
+                  shutil.rmtree(snapshot_dir) # Remove existing snapshot dir if necessary
+             # Copy contents from the original root directory
+             shutil.copytree(root, snapshot_dir, dirs_exist_ok=True, symlinks=True)
+             # Change the working directory to the snapshot directory
+             os.chdir(snapshot_dir)
+             print(f"Changed CWD to snapshot dir: {os.getcwd()}")
         else:
-            logger.warning(f"Specified checkpoint path {config.ckpt_path} is not valid, falling back to resume logic")
-    
-    # Fall back to resume logic if no direct checkpoint is specified or the specified path is invalid
-    if resume_ckpt is None and config.resume:
-        if isinstance(config.resume, str):
-            run_path = config.resume
-            assert os.path.exists(run_path), f"resume path {run_path} does not exist"
-        else:
-            run_path = os.getcwd()
-        resume_ckpt = find_existing_checkpoint(run_path, verbose=True) if not train_base else None
-    
-    # Setup Weights and Biases with the direct checkpoint flag
-    # wandb_logger = setup_wandb(config, log, git_hash, resume_ckpt, is_direct_ckpt)
-    wandb_logger = None
+             print(f"Error: Source directory {root} not found.")
+             return # Exit if source dir doesn't exist
 
-    datamodule = instantiate(config.datamodule)
-    
-    # Load model without checkpoint initially
-    model = instantiate(
-        config.model,
-        config_optim=config.optim,
-        eval_fn=getattr(datamodule, "eval_fn", None),
-        tokenizer=datamodule.tokenizer,
-        train_base=train_base,
-        checkpoint_path=None,  # Don't load checkpoint here
-        num_samples=num_samples,
-        continuation_length=continuation_length
-    )
+        # --- Original main function logic starts here ---
+        logger.info(OmegaConf.to_yaml(config))
+        # Logs dir path needs careful handling:
+        # If config.logs_dir is relative, it's now relative to snapshot_dir.
+        # If it's absolute, it's fine.
+        # If you want logs relative to the *original* execution dir, resolve it:
+        logs_dir = config.logs_dir
+        if not os.path.isabs(logs_dir):
+            logs_dir = os.path.join(root, logs_dir)
+            print(f"Resolved relative logs_dir to: {logs_dir}")
+            # Optionally update config, though ModelCheckpoint might take the absolute path directly
+            # OmegaConf.update(config, "logs_dir", logs_dir, merge=True)
 
-    check_model_dataset_consistency(model, datamodule)
+        logger.info(f"Saving logs, configs, and model checkpoints to {logs_dir}")
+        seed_everything(config.seed, workers=True)
 
-    # Add after model creation but before training starts
-    print("\n===== Checking trainable parameters =====")
-    trainable_params = 0
-    all_param_count = 0
-    planner_param_count = 0
-    adapter_param_count = 0
+        # Read training mode from Hydra config
+        train_base = config.train_base  # Train base model without adapter?
+        num_samples = config.num_samples
+        continuation_length = config.continuation_length
 
-    for name, param in model.named_parameters():
-        all_param_count += param.numel()
-        if param.requires_grad:
-            trainable_params += param.numel()
-            print(f"Trainable: {name} - {param.shape}")
-            
-            if "planner" in name:
-                planner_param_count += param.numel()
-            if "adapter" in name:
-                adapter_param_count += param.numel()
-
-    print(f"Total parameters: {all_param_count:,}")
-    print(f"Trainable parameters: {trainable_params:,}")
-    print(f"Planner parameters: {planner_param_count:,}")
-    print(f"Adapter parameters: {adapter_param_count:,}")
-
-    # Check if the planner and adapter are submodules
-    print("\nSubmodules of model:")
-    for name, module in model.named_children():
-        print(f"Submodule: {name}")
-    print("=====================================\n")
-
-    # Define ModelCheckpoint Callback to Save Checkpoints
-    checkpoint_callback = ModelCheckpoint(
-        dirpath=config.logs_dir,
-        filename="{epoch}-{val_loss:.2f}",
-        save_top_k=3,
-        monitor="val/loss",
-        mode="min",
-        save_last=True,
-    )
-
-    # print("Config: ", config.trainer)
-    config.trainer.accelerator = config.accelerator
-    trainer = Trainer(
-        **config.trainer,
-        logger=wandb_logger,
-        #callbacks=getattr(model, "callbacks", None),
-        #accelerator=None,
-        callbacks=[checkpoint_callback],  # Ensure checkpoints are saved
-        strategy="auto" if config.gpus <= 1 else "ddp_find_unused_parameters_true",
-        fast_dev_run=16 if config.debug else False,
-        profiler="simple" if config.debug else None,
-        detect_anomaly=config.debug,
-        deterministic=True,
-        gradient_clip_val=config.optim.grad_clip,
-        enable_progress_bar=not config.use_wandb,
-    )
-    
-    # If we have a checkpoint, load it manually with strict=False before training
-    if resume_ckpt:
-        print(f"Loading checkpoint with strict=False: {resume_ckpt}")
-        checkpoint = torch.load(resume_ckpt, map_location="cpu", weights_only=False)
-        # Load only matching keys, skip missing ones
-        result = model.load_state_dict(checkpoint["state_dict"], strict=False)
-        print(f"Ignored {len(result.missing_keys)} missing keys")
-        # Set resume_ckpt to None to prevent PyTorch Lightning from loading it again
+        # Check for direct checkpoint path
+        is_direct_ckpt = False
         resume_ckpt = None
-    
-    # Start training
-    trainer.fit(model, datamodule=datamodule, ckpt_path=resume_ckpt)
+        if hasattr(config, 'ckpt_path') and config.ckpt_path:
+            # Resolve potential relative path from original root
+            ckpt_path_abs = config.ckpt_path
+            if not os.path.isabs(ckpt_path_abs):
+                 ckpt_path_abs = os.path.join(root, ckpt_path_abs)
 
-    # Print where model checkpoint is saved
-    print(f"Model checkpoint saved in {config.logs_dir}")
+            if os.path.isfile(ckpt_path_abs) and ckpt_path_abs.endswith('.ckpt'):
+                resume_ckpt = ckpt_path_abs
+                is_direct_ckpt = True
+                logger.info(f"Using specified checkpoint: {resume_ckpt}")
+            else:
+                logger.warning(f"Specified checkpoint path {config.ckpt_path} (resolved to {ckpt_path_abs}) is not valid, falling back to resume logic")
 
-    if wandb_logger:
-        wandb_logger.experiment.finish()
+        # Fall back to resume logic
+        if resume_ckpt is None and config.resume:
+             run_path_to_search = None
+             if isinstance(config.resume, str):
+                  # Assume config.resume is relative to original root or absolute
+                  run_path_to_search = config.resume
+                  if not os.path.isabs(run_path_to_search):
+                       run_path_to_search = os.path.join(root, run_path_to_search)
+                  assert os.path.exists(run_path_to_search), f"resume path {run_path_to_search} does not exist"
+             else:
+                  # If resume=True, search in the resolved logs_dir
+                  run_path_to_search = logs_dir # Search in the potentially resolved logs dir
+
+             if run_path_to_search:
+                 resume_ckpt = find_existing_checkpoint(run_path_to_search, verbose=True) if not train_base else None
+
+
+        # Setup Weights and Biases
+        wandb_logger = setup_wandb(config, log, git_hash, resume_ckpt, is_direct_ckpt)
+        #wandb_logger = None # Disabled for now
+
+        datamodule = instantiate(config.datamodule)
+
+        # Load model
+        model = instantiate(
+            config.model,
+            config_optim=config.optim,
+            eval_fn=getattr(datamodule, "eval_fn", None),
+            tokenizer=datamodule.tokenizer,
+            train_base=train_base,
+            checkpoint_path=None, # Load manually later if needed
+            num_samples=num_samples,
+            continuation_length=continuation_length
+        )
+
+        check_model_dataset_consistency(model, datamodule)
+
+        # Print parameter info
+        print("\n===== Checking trainable parameters =====")
+        trainable_params = 0
+        all_param_count = 0
+        planner_param_count = 0
+        adapter_param_count = 0
+
+        for name, param in model.named_parameters():
+            all_param_count += param.numel()
+            if param.requires_grad:
+                trainable_params += param.numel()
+                print(f"Trainable: {name} - {param.shape}")
+                
+                if "planner" in name:
+                    planner_param_count += param.numel()
+                if "adapter" in name:
+                    adapter_param_count += param.numel()
+
+        print(f"Total parameters: {all_param_count:,}")
+        print(f"Trainable parameters: {trainable_params:,}")
+        print(f"Planner parameters: {planner_param_count:,}")
+        print(f"Adapter parameters: {adapter_param_count:,}")
+
+        # Check if the planner and adapter are submodules
+        print("\nSubmodules of model:")
+        for name, module in model.named_children():
+            print(f"Submodule: {name}")
+        print("=====================================\n")
+
+        # Define ModelCheckpoint Callback
+        checkpoint_callback = ModelCheckpoint(
+            dirpath=logs_dir, # Use the resolved logs_dir
+            filename="{epoch}-{val_loss:.2f}",
+            save_top_k=3,
+            monitor="val/loss",
+            mode="min",
+            save_last=True,
+        )
+
+        # Configure Trainer
+        # config.trainer.accelerator = config.accelerator # This might be redundant if already in config
+        trainer = Trainer(
+            **config.trainer,
+            logger=wandb_logger,
+            callbacks=[checkpoint_callback],
+            strategy="auto" if config.gpus <= 1 else "ddp_find_unused_parameters_true",
+            fast_dev_run=16 if config.debug else False,
+            profiler="simple" if config.debug else None,
+            detect_anomaly=config.debug,
+            deterministic=True,
+            gradient_clip_val=config.optim.grad_clip,
+            enable_progress_bar=not config.use_wandb,
+        )
+
+        # Manual Checkpoint Loading
+        if resume_ckpt and not trainer.fast_dev_run: # Don't load checkpoint in fast_dev_run
+            print(f"Loading checkpoint with strict=False: {resume_ckpt}")
+            checkpoint = torch.load(resume_ckpt, map_location="cpu", weights_only=False)
+            result = model.load_state_dict(checkpoint["state_dict"], strict=False)
+            print(f"Ignored {len(result.missing_keys)} missing keys")
+            # Prevent PL from trying to load it again
+            resume_ckpt_for_trainer = None
+        else:
+            resume_ckpt_for_trainer = None # Ensure it's None if not resuming
+
+        # Start training
+        trainer.fit(model, datamodule=datamodule, ckpt_path=resume_ckpt_for_trainer)
+
+        # Print where model checkpoint is saved
+        print(f"Model checkpoint saved in {logs_dir}")
+
+        if wandb_logger:
+            wandb_logger.experiment.finish()
+
+    finally:
+        # --- Cleanup: Change back to original directory ---
+        os.chdir(root) # Change back to the original directory
+        print(f"Changed CWD back to: {os.getcwd()}")
+        # Optionally remove the snapshot directory
+        # print(f"Removing snapshot directory: {snapshot_dir}")
+        # shutil.rmtree(snapshot_dir)
 
 
 if __name__ == "__main__":
-    # region Debugging
-    # print("Checking supported GPUs")
-    # print(torch.cuda.is_available())
-    # print(torch.__version__)
-    # print(torch.version.cuda)
-    # print(torch.backends.cudnn.version())
-    #endregion
-    # user = getpass.getuser()
-    # print("git hash: ", git_hash)
-    # TODO change base_dir: a snapshot of the code will be made when you run it,
-    # such that a slurm requeue (via hydra/submitit) can pick up from the code snapshot.
-    # therefore, make sure that this directory is visible from a shared location within your slurm cluster.
-    base_dir = f"/home/sayan/checkpoint/" 
-    os.makedirs(base_dir, exist_ok=True)
-    snapshot_dir = tempfile.mkdtemp(prefix=base_dir)
-    print("Snapshot dir is: ", snapshot_dir)
-    root = os.getcwd()
-    print("Root is: ", root)
-    
-    # Copy the current directory to the snapshot directory
-    shutil.copytree(root, snapshot_dir, dirs_exist_ok=True)
-    
-    # Change the working directory to the snapshot directory
-    os.chdir(snapshot_dir)
-    
+    # This now calls the @hydra.main decorated function
     main()
 
-# region Linux Implementation
+# region Linux Implementation (Keep commented out or integrate if needed)
 # if __name__ == "__main__":
 #     user = getpass.getuser()
 #     print("git hash: ", git_hash)
-#     # TODO change base_dir: a snapshot of the code will be made when you run it,
-#     # such that a slurm requeue (via hydra/submitit) can pick up from the code snapshot.
-#     # therefore, make sure that this directory is visible from a shared location within your slurm cluster.
-#     base_dir = f"/checkpoint/{user}/snapshots" 
+#     base_dir = f"/checkpoint/{user}/snapshots"
 #     os.makedirs(base_dir, exist_ok=True)
 #     snapshot_dir = tempfile.mkdtemp(prefix=base_dir)
 #     print("Snapshot dir is: ", snapshot_dir)
 #     root = os.getcwd()
 #     print("Root is: ", root)
 #     with RsyncSnapshot(snapshot_dir=snapshot_dir, root_dir=root):
-#         main()
+#          # Inside here, Hydra needs to be called, or config passed manually
+#          # This structure conflicts slightly with the @hydra.main decorator approach
+#          # You'd typically use one or the other (Hydra decorator OR manual snapshot + manual config loading)
+#          pass # main() # This would need adjustment if using RsyncSnapshot
 # endregion
