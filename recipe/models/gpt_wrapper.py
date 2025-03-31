@@ -16,23 +16,23 @@ class PlanAdapter(nn.Module):
     def __init__(self, hidden_size):
         super().__init__()
         self.plan_projection = nn.Linear(hidden_size, hidden_size, bias=False)
-        self.scale = nn.Parameter(torch.tensor(1.0))
+        self.scale = nn.Parameter(torch.tensor(0.0))
 
     def forward(self, plans, hidden_states):
         if plans is not None and plans.nelement() > 0:
             # print("Processing plans")
             processed_plans = self.plan_projection(plans)
             if processed_plans.shape != hidden_states.shape:
-                print("Inside IF")
-                processed_plans = torch.zeros_like(hidden_states)  # No influence if shape mismatch
+                raise ValueError(f"Shape mismatch between processed plans {processed_plans.shape} and hidden states {hidden_states.shape}")
             # Print the weight matrix of the plan projection layer
-            print("Plan projection weights:")
-            print(self.plan_projection.weight)
+            #print("Plan projection weights:")
+            #print(self.plan_projection.weight)
+            #print("Scale: ", self.scale)
             return self.scale * processed_plans + hidden_states
         return hidden_states
     
     def on_after_backward(self):
-        if hasattr(self, "adapter"):
+        if hasattr(self, "adapter") and False:
             print("\n======Plan Adapter gradients after backward=======")
             for name, param in self.named_parameters():
                 print(f"{name} | grad: {param.grad is not None} | grad norm: {param.grad.norm().item() if param.grad is not None else 'N/A'}")

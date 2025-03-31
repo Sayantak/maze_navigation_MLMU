@@ -272,7 +272,7 @@ class GPT2PL(PLModel):
 
     def forward(self, batch, **model_kwargs):
         # Print adapter weights at the start and periodically during training
-        if not self.printed_initial_weights and hasattr(self, 'adapter'):
+        if not self.printed_initial_weights and hasattr(self, 'adapter') and False:
             # Find the first weight matrix in the adapter
             for name, param in self.adapter.named_parameters():
                 if 'weight' in name and param.dim() == 2:  # Find a 2D weight matrix
@@ -287,13 +287,14 @@ class GPT2PL(PLModel):
                     self.printed_initial_weights = True
                     break
 
-        print("\n======Checking adapter parameters and gradients:=======")
-        for name, param in self.adapter.named_parameters():
-            print(f"{name} | requires_grad={param.requires_grad} | grad_fn={param.grad_fn} | grad={(param.grad is not None)}")
-        print("==========================================================\n")
+        if False:
+            print("\n======Checking adapter parameters and gradients:=======")
+            for name, param in self.adapter.named_parameters():
+                print(f"{name} | requires_grad={param.requires_grad} | grad_fn={param.grad_fn} | grad={(param.grad is not None)}")
+            print("==========================================================\n")
 
         # Periodically print the weights again to see if they're changing
-        if hasattr(self, 'monitored_param') and self.training:
+        if hasattr(self, 'monitored_param') and self.training and False:
             self.batch_counter += 1
             if self.batch_counter % 2 == 0:  # Every 10 batches
                 weight_sample = self.monitored_param[:5, :5].detach().cpu().numpy()
@@ -316,12 +317,30 @@ class GPT2PL(PLModel):
 
             plans = self.planner.forward(
                 prompts=prompts,
-                prompt_masks=prompt_masks, 
+                prompt_masks=prompt_masks,
                 split_index=split_idx,  # Randomly sampled split index
                 num_samples=self.num_samples,  # Number of plans to generate (K)
                 continuation_length=self.continuation_length  # Length of each generated plan
             )
-            batch["plans"] = plans  # Inject plans into the batch
+
+            # Assertion: Check if plans have the expected shape [batch_size, vec_dim]
+            batch_size = batch["input_ids"].shape[0]
+            vec_dim = plans.shape[-1]
+            assert plans.shape == (batch_size, vec_dim), \
+                f"Expected plans shape ({batch_size}, {vec_dim}), but got {plans.shape}"
+
+            # Create the formatted plans tensor
+            seq_len = batch["input_ids"].shape[1]
+            formatted_plans = torch.zeros(batch_size, seq_len, vec_dim, device=plans.device, dtype=plans.dtype)
+
+            # Expand the plan vector to match the sequence length dimension from split_idx onwards
+            expanded_plans = plans.unsqueeze(1).expand(-1, seq_len - split_idx, -1)
+
+            # Assign the expanded plans to the corresponding slice in formatted_plans
+            formatted_plans[:, split_idx:, :] = expanded_plans
+
+            # Inject the formatted plans into the batch
+            batch["plans"] = formatted_plans
         
         out = self.model(
             **batch,
@@ -331,11 +350,11 @@ class GPT2PL(PLModel):
         return out
 
     def on_after_backward(self):
-        if hasattr(self, "adapter"):
+        if hasattr(self, "adapter") and False:
             print("\n======Adapter gradients after backward=======")
             for name, param in self.adapter.named_parameters():
                 print(f"{name} | grad: {param.grad is not None} | grad norm: {param.grad.norm().item() if param.grad is not None else 'N/A'}")
-        if hasattr(self, "model"):
+        if hasattr(self, "model") and False:
             print("\n======Plan Adapter gradients after backward=======")
             for name, param in self.model.named_parameters():
                 print(f"{name} | grad: {param.grad is not None} | grad norm: {param.grad.norm().item() if param.grad is not None else 'N/A'}")
