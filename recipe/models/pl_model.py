@@ -179,96 +179,108 @@ class GPT2PL(PLModel):
         eval_fn=None,
         config_optim=None,
         tokenizer=None,
-        planner=None,  # New argument for the planner
         from_pretrained=False,
         train_base=True,
+        train_planner=False,
         checkpoint_path=None,
         num_samples=5,
         continuation_length=10,
         **model_kwargs,
     ) -> None:
         super().__init__(eval_fn=eval_fn, config_optim=config_optim, **model_kwargs)
-        self.batch_counter = 0  # Add a counter to track batches
+        self.batch_counter = 0
         self.printed_initial_weights = False
-        
-        if checkpoint_path and not train_base:
-            # Load from checkpoint
-            print(f"Loading model from checkpoint: {checkpoint_path}")
-            self.model = GPT2PL.load_from_checkpoint(
-                checkpoint_path,
-                config_optim=config_optim,
-                eval_fn=eval_fn,
-                tokenizer=tokenizer,
-            ).model
-        else:
-            if from_pretrained:
-                print("Loading from pretrained, ignoring rest of config.")
-                self.model = GPT2Custom.from_pretrained("openai-community/gpt2")
-            else:
-                print("Model inititalisation according to config.")
-                if tokenizer is not None:
-                    model_kwargs["vocab_size"] = tokenizer.vocab_size
-                model_kwargs.update(
-                    vocab_size=nearest_multiple(tokenizer.vocab_size),
-                    bos_token_id=tokenizer.bos_token_id,
-                    eos_token_id=tokenizer.eos_token_id,
-                    pad_token_id=tokenizer.pad_token_id,
-                )
-                model_config = GPT2Config(
-                    **model_kwargs,
-                )
-                self.model = GPT2Custom(model_config)
-                self.model.apply(self.model._init_weights)
+        self.num_samples = num_samples
+        self.continuation_length = continuation_length
+        self.train_planner = train_planner
+        self.train_base = train_base
 
-        # Conditionally initialize planner and adapter
-        if not train_base:
-            # Initialize TokenPlanner if no planner is provided
-            print("Attaching TokenSampleAdapter for fine-tuning")
-            if planner is None:
-                # Critical fix: properly register adapter as a PyTorch module
-                self.adapter = TokenSampleAdapter(
-                    hidden_size=self.model.config.hidden_size,
-                    vocab_size=self.model.config.vocab_size,
-                    pad_token_id=tokenizer.pad_token_id if tokenizer else None
-                )
-                
-                # Double-check that adapter params require gradients
-                for name, param in self.adapter.named_parameters():
+        # --- Input Validation ---
+        if not train_base and not train_planner:
+            # This case implies no training, maybe just inference?
+            # For now, let's proceed assuming a base model is needed, but frozen.
+            print("Warning: train_base=False and train_planner=False. Model will be loaded/initialized but not trained.")
+            # Alternatively, raise ValueError("Both train_base and train_planner are False. Nothing to train.")
+
+        # --- Base Model Initialization ---
+        # Simplified checkpoint handling: We load manually in main.py *after* instantiation.
+        # The `checkpoint_path` argument here is less useful now.
+        if from_pretrained:
+            print("Loading base GPT model from pretrained 'openai-community/gpt2'.")
+            self.model = GPT2Custom.from_pretrained("openai-community/gpt2")
+        else:
+            print("Initializing base GPT model from scratch according to config.")
+            if tokenizer is not None:
+                model_kwargs["vocab_size"] = tokenizer.vocab_size
+            model_kwargs.update(
+                vocab_size=nearest_multiple(tokenizer.vocab_size),
+                bos_token_id=tokenizer.bos_token_id,
+                eos_token_id=tokenizer.eos_token_id,
+                pad_token_id=tokenizer.pad_token_id,
+            )
+            model_config = GPT2Config(**model_kwargs)
+            self.model = GPT2Custom(model_config)
+            self.model.apply(self.model._init_weights)
+
+        # --- Planner/Adapter Initialization (Unconditional) ---
+        print("Initializing Planner and Adapter modules.")
+        self.adapter = TokenSampleAdapter(
+            hidden_size=self.model.config.hidden_size,
+            vocab_size=self.model.config.vocab_size,
+            pad_token_id=tokenizer.pad_token_id if tokenizer else None
+        )
+        self.planner = TokenPlanner(
+            model=self.model,
+            adapter=self.adapter,
+            tokenizer=tokenizer,
+            config=self.model.config,
+        )
+
+        # --- Parameter Freezing Logic ---
+        # Freeze/Unfreeze Adapter based on train_planner
+        if self.train_planner:
+            print("Planner/Adapter parameters will be trained (requires_grad=True).")
+            for name, param in self.adapter.named_parameters():
+                param.requires_grad = True
+            # Assuming TokenPlanner uses adapter params; if it had its own, handle here
+        else:
+            print("Planner/Adapter parameters are FROZEN (requires_grad=False).")
+            for name, param in self.adapter.named_parameters():
+                param.requires_grad = False
+            # Set adapter to eval mode if not training it
+            self.adapter.eval()
+
+        # Freeze/Unfreeze Base Model based on train_base
+        if self.train_base:
+            print("Base GPT model parameters will be trained (requires_grad=True).")
+            for param in self.model.parameters():
+                param.requires_grad = True
+            self.model.train() # Set base model to training mode
+        else:
+            print("Base GPT model parameters are FROZEN (requires_grad=False), except for plan_adapter parameters.")
+            for name, param in self.model.named_parameters():
+                if 'plan_adapter' in name:
                     param.requires_grad = True
-                    print(f"Setting adapter param {name} requires_grad=True")
+                else:
+                    param.requires_grad = False
+            self.model.eval() # Set base model to evaluation mode
 
-                # Freeze GPT-2 parameters
-                for param in self.model.parameters():
-                    param.requires_grad = False  # Prevent GPT-2 from updating
-                # Ensure PyTorch does not update the model
-                self.model.training = False  # Explicitly set training mode to False
-                self.model.eval()  # Ensure model is in eval mode
 
-                for name, param in self.model.named_parameters():
-                    if name.startswith("plan_adapter"):
-                        param.requires_grad = True  # Allow adapter to update
-
-                self.planner = TokenPlanner(
-                    model=self.model,           # Pass the model
-                    adapter=self.adapter,       # Adapter can be set up separately if needed
-                    tokenizer=tokenizer,
-                    config=self.model.config,   # Ensure config matches model
-                )
-                self.num_samples = num_samples
-                self.continuation_length = continuation_length
-                
-                # Print summary of parameters
-                print("\n===== Parameter Status After Setup =====")
-                for name, param in self.named_parameters():
-                    if param.requires_grad:
-                        print(f"Will train: {name}, shape: {param.shape}")
-                print("=======================================\n")
+        # --- Final Parameter Status Check ---
+        print("\n===== Final Parameter Training Status =====")
+        total_params = 0
+        trainable_params = 0
+        for name, param in self.named_parameters():
+            total_params += param.numel()
+            if param.requires_grad:
+                trainable_params += param.numel()
+                print(f"  [TRAINABLE] {name} ({param.shape})")
             else:
-                self.planner = planner
-                self.add_module('planner', self.planner)
-        else:
-            print("Training base GPT-2 without adapter")
-            self.planner = None # No planner for base model
+                print(f"  [FROZEN]    {name} ({param.shape})")
+        print(f"Total parameters: {total_params:,}")
+        print(f"Trainable parameters: {trainable_params:,}")
+        print("===========================================\n")
+
 
     def forward(self, batch, **model_kwargs):
         # Print adapter weights at the start and periodically during training
@@ -302,46 +314,59 @@ class GPT2PL(PLModel):
                 print(weight_sample)
                 print("================================================================\n")
         
-        # Generate plans using the planner only if fine-tuning
-        if self.planner is not None:
-            # print("num_samples: ", self.num_samples)
-            # print("continuation_length: ", self.continuation_length)
-            # print("Forward pass is reached")
-            # Sample split index randomly between 2 and max sequence length
+        # Generate plans only if train_planner is True
+        if self.train_planner: # Changed condition from self.planner is not None
+            # print("Generating plans...") # Optional debug print
             max_idx = batch["input_ids"].shape[1] - 1
-            split_idx = torch.randint(2, max_idx, (1,)).item()
+            if max_idx < 2:
+                 print(f"Warning: Sequence length ({max_idx+1}) too short for planning, skipping plan generation for this batch.")
+                 # Ensure batch["plans"] doesn't exist or is handled downstream
+                 # If GPT2Custom requires "plans", create a dummy zero tensor here:
+                 # batch_size = batch["input_ids"].shape[0]
+                 # seq_len = batch["input_ids"].shape[1]
+                 # vec_dim = self.model.config.hidden_size # Or adapter output dim
+                 # batch["plans"] = torch.zeros(batch_size, seq_len, vec_dim, device=batch["input_ids"].device, dtype=self.dtype)
+                 pass # Assuming GPT2Custom handles missing "plans" key gracefully
+            else:
+                 split_idx = torch.randint(2, max_idx, (1,)).item()
+                 prompts = batch["input_ids"][:, :split_idx]
+                 prompt_masks = batch["attention_mask"][:, :split_idx]
 
-            # Split prompts at the split index
-            prompts = batch["input_ids"][:, :split_idx]
-            prompt_masks = batch["attention_mask"][:, :split_idx]
+                 # Ensure adapter is in the correct mode (train/eval) based on requires_grad status
+                 # This might be redundant if requires_grad handles it, but can be explicit:
+                 # self.adapter.train(self.adapter.parameters().__next__().requires_grad)
 
-            plans = self.planner.forward(
-                prompts=prompts,
-                prompt_masks=prompt_masks,
-                split_index=split_idx,  # Randomly sampled split index
-                num_samples=self.num_samples,  # Number of plans to generate (K)
-                continuation_length=self.continuation_length  # Length of each generated plan
-            )
+                 plans = self.planner.forward(
+                     prompts=prompts,
+                     prompt_masks=prompt_masks,
+                     split_index=split_idx,
+                     num_samples=self.num_samples,
+                     continuation_length=self.continuation_length
+                 )
 
-            # Assertion: Check if plans have the expected shape [batch_size, vec_dim]
-            batch_size = batch["input_ids"].shape[0]
-            vec_dim = plans.shape[-1]
-            assert plans.shape == (batch_size, vec_dim), \
-                f"Expected plans shape ({batch_size}, {vec_dim}), but got {plans.shape}"
+                 # Assertion: Check if plans have the expected shape [batch_size, vec_dim]
+                 batch_size = batch["input_ids"].shape[0]
+                 vec_dim = plans.shape[-1]
+                 assert plans.shape == (batch_size, vec_dim), \
+                     f"Expected plans shape ({batch_size}, {vec_dim}), but got {plans.shape}"
 
-            # Create the formatted plans tensor
-            seq_len = batch["input_ids"].shape[1]
-            formatted_plans = torch.zeros(batch_size, seq_len, vec_dim, device=plans.device, dtype=plans.dtype)
+                 # Create the formatted plans tensor
+                 seq_len = batch["input_ids"].shape[1]
+                 formatted_plans = torch.zeros(batch_size, seq_len, vec_dim, device=plans.device, dtype=plans.dtype)
 
-            # Expand the plan vector to match the sequence length dimension from split_idx onwards
-            expanded_plans = plans.unsqueeze(1).expand(-1, seq_len - split_idx, -1)
+                 # Expand the plan vector
+                 expanded_plans = plans.unsqueeze(1).expand(-1, seq_len - split_idx, -1)
 
-            # Assign the expanded plans to the corresponding slice in formatted_plans
-            formatted_plans[:, split_idx:, :] = expanded_plans
+                 # Assign the expanded plans
+                 formatted_plans[:, split_idx:, :] = expanded_plans
 
-            # Inject the formatted plans into the batch
-            batch["plans"] = formatted_plans
-        
+                 # Inject the formatted plans into the batch
+                 batch["plans"] = formatted_plans
+        # else: # Optional: Explicitly remove or zero out plans if not training planner
+             # if "plans" in batch: del batch["plans"]
+
+        # --- Call the base model ---
+        # Ensure GPT2Custom handles the case where batch["plans"] might not exist
         out = self.model(
             **batch,
             mode=self.train_mode,
@@ -350,14 +375,11 @@ class GPT2PL(PLModel):
         return out
 
     def on_after_backward(self):
-        if hasattr(self, "adapter") and False:
-            print("\n======Adapter gradients after backward=======")
-            for name, param in self.adapter.named_parameters():
-                print(f"{name} | grad: {param.grad is not None} | grad norm: {param.grad.norm().item() if param.grad is not None else 'N/A'}")
-        if hasattr(self, "model") and False:
-            print("\n======Plan Adapter gradients after backward=======")
-            for name, param in self.model.named_parameters():
-                print(f"{name} | grad: {param.grad is not None} | grad norm: {param.grad.norm().item() if param.grad is not None else 'N/A'}")
+        # --- Debug Prints (Keep disabled or remove) ---
+        # if hasattr(self, "adapter") and False: ...
+        # if hasattr(self, "model") and False: ...
+        pass # Keep disabled prints out of the way
+
 
 class MistralPL(PLModel):
     def __init__(

@@ -81,8 +81,9 @@ def main(config: DictConfig) -> None:
         logger.info(f"Saving logs, configs, and model checkpoints to {logs_dir}")
         seed_everything(config.seed, workers=True)
 
-        # Read training mode from Hydra config
-        train_base = config.train_base  # Train base model without adapter?
+        # Read training mode flags from Hydra config
+        train_base = config.train_base
+        train_planner = config.train_planner # Read the new flag
         num_samples = config.num_samples
         continuation_length = config.continuation_length
 
@@ -120,20 +121,25 @@ def main(config: DictConfig) -> None:
 
 
         # Setup Weights and Biases
-        if config.use_wandb:
+        # Read the top-level use_wandb flag
+        use_wandb_flag = config.get("use_wandb", True) # Default to True if not specified
+        if use_wandb_flag:
+            # Pass the main config, logger, git hash, etc.
             wandb_logger = setup_wandb(config, log, git_hash, resume_ckpt, is_direct_ckpt)
         else:
             wandb_logger = None
+            print("Weights & Biases logging disabled (use_wandb=False).")
 
         datamodule = instantiate(config.datamodule)
 
-        # Load model
+        # Load model, passing the training flags
         model = instantiate(
             config.model,
             config_optim=config.optim,
             eval_fn=getattr(datamodule, "eval_fn", None),
             tokenizer=datamodule.tokenizer,
             train_base=train_base,
+            train_planner=train_planner, # Pass the new flag
             checkpoint_path=None, # Load manually later if needed
             num_samples=num_samples,
             continuation_length=continuation_length
