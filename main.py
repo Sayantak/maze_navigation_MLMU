@@ -120,8 +120,10 @@ def main(config: DictConfig) -> None:
 
 
         # Setup Weights and Biases
-        wandb_logger = setup_wandb(config, log, git_hash, resume_ckpt, is_direct_ckpt)
-        #wandb_logger = None # Disabled for now
+        if config.use_wandb:
+            wandb_logger = setup_wandb(config, log, git_hash, resume_ckpt, is_direct_ckpt)
+        else:
+            wandb_logger = None
 
         datamodule = instantiate(config.datamodule)
 
