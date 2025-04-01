@@ -84,8 +84,7 @@ def main(config: DictConfig) -> None:
         # Read training mode flags from Hydra config
         train_base = config.train_base
         train_planner = config.train_planner # Read the new flag
-        num_samples = config.num_samples
-        continuation_length = config.continuation_length
+
 
         # Check for direct checkpoint path
         is_direct_ckpt = False
@@ -139,10 +138,12 @@ def main(config: DictConfig) -> None:
             eval_fn=getattr(datamodule, "eval_fn", None),
             tokenizer=datamodule.tokenizer,
             train_base=train_base,
-            train_planner=train_planner, # Pass the new flag
-            checkpoint_path=None, # Load manually later if needed
-            num_samples=num_samples,
-            continuation_length=continuation_length
+            train_planner=train_planner,
+            checkpoint_path=None,
+            # Get planning parameters from planning config
+            num_samples=config.planning.num_samples,
+            continuation_length=config.planning.continuation_length,
+            split_idx_mode=config.planning.split_idx_mode,
         )
 
         check_model_dataset_consistency(model, datamodule)

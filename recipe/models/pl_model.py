@@ -185,6 +185,7 @@ class GPT2PL(PLModel):
         checkpoint_path=None,
         num_samples=5,
         continuation_length=10,
+        split_idx_mode="random",
         **model_kwargs,
     ) -> None:
         super().__init__(eval_fn=eval_fn, config_optim=config_optim, **model_kwargs)
@@ -194,6 +195,7 @@ class GPT2PL(PLModel):
         self.continuation_length = continuation_length
         self.train_planner = train_planner
         self.train_base = train_base
+        self.split_idx_mode = split_idx_mode
 
         # --- Input Validation ---
         if not train_base and not train_planner:
@@ -315,8 +317,7 @@ class GPT2PL(PLModel):
                 print("================================================================\n")
         
         # Generate plans only if train_planner is True
-        if self.train_planner: # Changed condition from self.planner is not None
-            # print("Generating plans...") # Optional debug print
+        if self.train_planner:
             max_idx = batch["input_ids"].shape[1] - 1
             if max_idx < 2:
                  print(f"Warning: Sequence length ({max_idx+1}) too short for planning, skipping plan generation for this batch.")
@@ -328,7 +329,23 @@ class GPT2PL(PLModel):
                  # batch["plans"] = torch.zeros(batch_size, seq_len, vec_dim, device=batch["input_ids"].device, dtype=self.dtype)
                  pass # Assuming GPT2Custom handles missing "plans" key gracefully
             else:
-                 split_idx = torch.randint(2, max_idx, (1,)).item()
+                 # Determine split_idx based on configuration
+                 if self.split_idx_mode == "random":
+                     # Original random behavior
+                     split_idx = torch.randint(2, max_idx, (1,)).item()
+                 else:
+                     try:
+                         # Treat as fixed integer
+                         fixed_idx = int(self.split_idx_mode)
+                         # Ensure the index is valid
+                         split_idx = max(2, min(fixed_idx, max_idx))
+                         if split_idx != fixed_idx:
+                             print(f"Warning: Adjusted split_idx from {fixed_idx} to {split_idx} to fit sequence length")
+                     except ValueError:
+                         # Fallback to random if conversion fails
+                         print(f"Warning: Invalid split_idx_mode '{self.split_idx_mode}', using random instead")
+                         split_idx = torch.randint(2, max_idx, (1,)).item()
+                 
                  prompts = batch["input_ids"][:, :split_idx]
                  prompt_masks = batch["attention_mask"][:, :split_idx]
 
