@@ -12,6 +12,17 @@ planning:
   # Embedding initialization
   use_gpt_embeddings: False  # Whether to initialize TransformerSampleEncoder with GPT2 embeddings
   
+  # TokenSampleAdapter configuration
+  adapter:
+    projection_dim: null  # If null, uses hidden_size
+    use_aggregator_layer_norm: False  # Apply layer norm in aggregator
+    disable_aggregator_transformer: False  # Disable transformer in aggregator
+    use_encoder_layer_norm: False  # Apply layer norm in encoder
+    encoder_num_layers: 1  # Number of layers in encoder
+    aggregator_num_layers: 1  # Number of layers in aggregator
+    disable_attention_mask: False  # Disable attention mask
+    use_cls_token: False  # Use CLS token
+  
   # Add any other planner-specific parameters here in the future
   # For example:
   # temperature: 0.7

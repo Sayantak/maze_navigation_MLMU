@@ -145,6 +145,8 @@ def main(config: DictConfig) -> None:
             num_samples=config.planning.num_samples,
             continuation_length=config.planning.continuation_length,
             split_idx_mode=config.planning.split_idx_mode,
+            # Add the entire planning configuration to the hparams
+            planning=config.planning,
         )
 
         check_model_dataset_consistency(model, datamodule)

@@ -224,13 +224,34 @@ class GPT2PL(PLModel):
             self.model = GPT2Custom(model_config)
             self.model.apply(self.model._init_weights)
 
-        # --- Planner/Adapter Initialization (Unconditional) ---
+        # --- Planner/Adapter Initialization ---
         print("Initializing Planner and Adapter modules.")
+        
+        # Get adapter configuration from config, if available
+        adapter_config = {}
+        if 'planning' in self.hparams and 'adapter' in self.hparams.planning:
+            adapter_config = self.hparams.planning.adapter
+        
+        # Extract default hidden size for adapter
+        hidden_size = self.model.config.hidden_size
+        
+        # Create adapter with configurable parameters
         self.adapter = TokenSampleAdapter(
-            hidden_size=self.model.config.hidden_size,
+            hidden_size=hidden_size,
             vocab_size=self.model.config.vocab_size,
-            pad_token_id=tokenizer.pad_token_id if tokenizer else None
+            projection_dim=adapter_config.get('projection_dim', None),
+            pad_token_id=tokenizer.pad_token_id if tokenizer else None,
+            pretrained_embeddings=None,  # This could be set later if needed
+            use_aggregator_layer_norm=adapter_config.get('use_aggregator_layer_norm', False),
+            disable_aggregator_transformer=adapter_config.get('disable_aggregator_transformer', False),
+            use_encoder_layer_norm=adapter_config.get('use_encoder_layer_norm', False),
+            encoder_num_layers=adapter_config.get('encoder_num_layers', 1),
+            aggregator_num_layers=adapter_config.get('aggregator_num_layers', 1),
+            disable_attention_mask=adapter_config.get('disable_attention_mask', False),
+            use_cls_token=adapter_config.get('use_cls_token', False)
         )
+        
+        # Create TokenPlanner with our adapter
         self.planner = TokenPlanner(
             model=self.model,
             adapter=self.adapter,
