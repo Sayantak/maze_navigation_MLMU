@@ -308,7 +308,7 @@ class BaseSampleAdapter(nn.Module):
 
 class TokenSampleAdapter(BaseSampleAdapter):
     """Adapter that processes token sequences."""
-    def __init__(self, hidden_size, vocab_size, continuation_length=20, 
+    def __init__(self, hidden_size, vocab_size, 
                  projection_dim=None, pad_token_id=None, pretrained_embeddings=None,
                  use_aggregator_layer_norm=False, disable_aggregator_transformer=False,
                  use_encoder_layer_norm=False, encoder_num_layers=1, aggregator_num_layers=1,

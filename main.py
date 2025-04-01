@@ -19,6 +19,7 @@ import getpass
 import tempfile
 import torch
 import shutil
+from recipe.models.planning import TransformerSampleEncoder  # Add this import
 
 
 log = logging.getLogger(__name__)
@@ -208,6 +209,36 @@ def main(config: DictConfig) -> None:
             checkpoint = torch.load(resume_ckpt, map_location="cpu", weights_only=False)
             result = model.load_state_dict(checkpoint["state_dict"], strict=False)
             print(f"Ignored {len(result.missing_keys)} missing keys")
+            
+            # Add the embedding initialization code here
+            if hasattr(config.planning, 'use_gpt_embeddings') and config.planning.use_gpt_embeddings and train_planner:
+                print("\n===== Initializing TransformerSampleEncoder embeddings from GPT2 =====")
+                if not (hasattr(model, 'planner') and hasattr(model.planner, 'adapter') and hasattr(model.model, 'transformer')):
+                    raise RuntimeError("Required model components not found for embedding initialization. "
+                                      "Make sure model has 'planner', 'planner.adapter', and 'model.transformer' attributes.")
+                    
+                # Access the GPT2 embedding table
+                gpt_embeddings = model.model.transformer.wte.weight.detach().clone()
+                
+                # Find the TransformerSampleEncoder in your planner/adapter
+                if not (hasattr(model.planner.adapter, 'encoder') and 
+                        isinstance(model.planner.adapter.encoder, TransformerSampleEncoder)):
+                    raise RuntimeError("TransformerSampleEncoder not found in model.planner.adapter.encoder. "
+                                      "Check your model architecture or disable use_gpt_embeddings.")
+                
+                encoder = model.planner.adapter.encoder
+                
+                # Check if the embedding dimensions match
+                if encoder.token_embedding.weight.shape != gpt_embeddings.shape:
+                    raise ValueError(f"Embedding shapes don't match. Cannot initialize. "
+                                   f"GPT2: {gpt_embeddings.shape}, Encoder: {encoder.token_embedding.weight.shape}")
+                
+                # Only proceed if all checks pass
+                encoder.token_embedding.weight.data.copy_(gpt_embeddings)
+                print(f"Successfully copied GPT2 embeddings to TransformerSampleEncoder")
+                print(f"Embedding shape: {gpt_embeddings.shape}")
+                print("=================================================================\n")
+            
             # Prevent PL from trying to load it again
             resume_ckpt_for_trainer = None
         else:
