@@ -10,37 +10,10 @@ import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss
 from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
 from transformers import GPT2LMHeadModel, GPT2Config
+from .custom_gpt2 import CodeGPT2LMHeadModel
 
-class PlanAdapter(nn.Module):
-    """Handles integration of forward predictions (plans) into the model's hidden states."""
-    def __init__(self, hidden_size):
-        super().__init__()
-        self.plan_projection = nn.Linear(hidden_size, hidden_size, bias=False)
-        self.scale = nn.Parameter(torch.tensor(0.0))
+class GPT2Custom(CodeGPT2LMHeadModel):
 
-    def forward(self, plans, hidden_states):
-        if plans is not None and plans.nelement() > 0:
-            # print("Processing plans")
-            processed_plans = self.plan_projection(plans)
-            if processed_plans.shape != hidden_states.shape:
-                raise ValueError(f"Shape mismatch between processed plans {processed_plans.shape} and hidden states {hidden_states.shape}")
-            # Print the weight matrix of the plan projection layer
-            #print("Plan projection weights:")
-            #print(self.plan_projection.weight)
-            #print("Scale: ", self.scale)
-            return self.scale * processed_plans + hidden_states
-        return hidden_states
-    
-    def on_after_backward(self):
-        if hasattr(self, "adapter") and False:
-            print("\n======Plan Adapter gradients after backward=======")
-            for name, param in self.named_parameters():
-                print(f"{name} | grad: {param.grad is not None} | grad norm: {param.grad.norm().item() if param.grad is not None else 'N/A'}")
-
-class GPT2Custom(GPT2LMHeadModel):
-    def __init__(self, config):
-        super().__init__(config)
-        self.plan_adapter = PlanAdapter(config.n_embd)
     def forward(
         self,
         input_ids=None,
@@ -59,7 +32,7 @@ class GPT2Custom(GPT2LMHeadModel):
         output_hidden_states=None,
         return_dict=None,
         prediction_mask=None,
-        plans=None,  # New argument for forward predictions
+        codes=None,  # New argument for forward predictions
         **kwargs,
     ):
         r"""
@@ -131,11 +104,9 @@ class GPT2Custom(GPT2LMHeadModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            codes=codes,
         )
         hidden_states = transformer_outputs[0]
-
-        # Integrate forward-generated plans using the PlanAdapter
-        hidden_states = self.plan_adapter(plans, hidden_states)
 
         # Set device for model parallelism
         if self.model_parallel:

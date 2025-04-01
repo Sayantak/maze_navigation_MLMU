@@ -259,7 +259,7 @@ class GPT2PL(PLModel):
         else:
             print("Base GPT model parameters are FROZEN (requires_grad=False), except for plan_adapter parameters.")
             for name, param in self.model.named_parameters():
-                if 'plan_adapter' in name:
+                if 'code_handler' in name:
                     param.requires_grad = True
                 else:
                     param.requires_grad = False
@@ -361,7 +361,7 @@ class GPT2PL(PLModel):
                  formatted_plans[:, split_idx:, :] = expanded_plans
 
                  # Inject the formatted plans into the batch
-                 batch["plans"] = formatted_plans
+                 batch["codes"] = formatted_plans
         # else: # Optional: Explicitly remove or zero out plans if not training planner
              # if "plans" in batch: del batch["plans"]
 
