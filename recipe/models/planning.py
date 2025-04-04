@@ -562,7 +562,7 @@ class BaselinePlanner(Planner):
 class TokenPlanner(Planner):
     """Planner that generates in token space."""
     
-    def forward(self, prompts, prompt_masks, split_index, num_samples, continuation_length, context_hidden=None, debug=False, **kwargs):
+    def forward(self, prompts, prompt_masks, split_index, num_samples, continuation_length, context_hidden=None, debug=False, cut_outputs=True, **kwargs):
         # print("In forward of TokenPlanner")
         transformers_logger = logging.getLogger("transformers.generation.utils")
         current_level = transformers_logger.level
@@ -582,7 +582,11 @@ class TokenPlanner(Planner):
             output_scores=True,
         )
 
-        continuations = outputs.sequences[:, prompts.size(1):]
+        if cut_outputs:
+            continuations = outputs.sequences[:, prompts.size(1):]
+        else:
+            continuations = outputs.sequences
+
         continuations = continuations.reshape(prompts.size(0), num_samples, -1)
 
         if debug:

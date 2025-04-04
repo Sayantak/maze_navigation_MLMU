@@ -186,6 +186,7 @@ class GPT2PL(PLModel):
         num_samples=5,
         continuation_length=10,
         split_idx_mode="random",
+        cut_outputs=True,
         **model_kwargs,
     ) -> None:
         super().__init__(eval_fn=eval_fn, config_optim=config_optim, **model_kwargs)
@@ -196,7 +197,7 @@ class GPT2PL(PLModel):
         self.train_planner = train_planner
         self.train_base = train_base
         self.split_idx_mode = split_idx_mode
-
+        self.cut_outputs = cut_outputs
         # --- Input Validation ---
         if not train_base and not train_planner:
             # This case implies no training, maybe just inference?
@@ -339,7 +340,15 @@ class GPT2PL(PLModel):
         
         # Generate plans only if train_planner is True
         if self.train_planner:
-            max_idx = batch["input_ids"].shape[1] - 1
+            # Find the first 1 in each sequence of the prediction mask
+            first_ones = torch.argmax((batch["prediction_mask"] == 1).long(), dim=1).max()
+            min_index = first_ones.item()
+
+            # Find the last 1 in each sequence of the prediction mask
+            last_ones = torch.max((batch["prediction_mask"] == 1).nonzero(as_tuple=True)[1])
+            last_ones = last_ones.min().item()
+            max_idx = last_ones
+
             if max_idx < 2:
                  print(f"Warning: Sequence length ({max_idx+1}) too short for planning, skipping plan generation for this batch.")
                  # Ensure batch["plans"] doesn't exist or is handled downstream
@@ -353,19 +362,17 @@ class GPT2PL(PLModel):
                  # Determine split_idx based on configuration
                  if self.split_idx_mode == "random":
                      # Original random behavior
-                     split_idx = torch.randint(2, max_idx, (1,)).item()
+                     split_idx = torch.randint(min_index, max_idx, (1,)).item()
                  else:
                      try:
                          # Treat as fixed integer
                          fixed_idx = int(self.split_idx_mode)
                          # Ensure the index is valid
-                         split_idx = max(2, min(fixed_idx, max_idx))
-                         if split_idx != fixed_idx:
-                             print(f"Warning: Adjusted split_idx from {fixed_idx} to {split_idx} to fit sequence length")
+                         split_idx = min(min_index + fixed_idx, max_idx)
                      except ValueError:
                          # Fallback to random if conversion fails
                          print(f"Warning: Invalid split_idx_mode '{self.split_idx_mode}', using random instead")
-                         split_idx = torch.randint(2, max_idx, (1,)).item()
+                         split_idx = torch.randint(min_index, max_idx, (1,)).item()
                  
                  prompts = batch["input_ids"][:, :split_idx]
                  prompt_masks = batch["attention_mask"][:, :split_idx]
@@ -379,7 +386,8 @@ class GPT2PL(PLModel):
                      prompt_masks=prompt_masks,
                      split_index=split_idx,
                      num_samples=self.num_samples,
-                     continuation_length=self.continuation_length
+                     continuation_length=self.continuation_length,
+                     cut_outputs=self.cut_outputs
                  )
 
                  # Assertion: Check if plans have the expected shape [batch_size, vec_dim]

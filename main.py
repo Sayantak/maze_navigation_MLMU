@@ -147,6 +147,7 @@ def main(config: DictConfig) -> None:
             split_idx_mode=config.planning.split_idx_mode,
             # Add the entire planning configuration to the hparams
             planning=config.planning,
+            cut_outputs=config.planning.cut_outputs
         )
 
         check_model_dataset_consistency(model, datamodule)

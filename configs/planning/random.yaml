@@ -4,6 +4,7 @@
 planning:
   # Split index configuration: "random" or an integer
   split_idx_mode: "random"  # Position to split the sequence for planning
+  cut_outputs: True # discard the prompt when passing it to the adapter
   
   # Sampling parameters
   num_samples: 5       # Number of samples to generate during planning
