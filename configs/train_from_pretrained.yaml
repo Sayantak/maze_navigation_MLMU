@@ -1,0 +1,26 @@
+# Inherit settings from the default config
+defaults:
+  - train_defaults
+  # No planning entry here
+
+# Override specific settings for this configuration
+train_base: False # Do not finetune the AR baseline, only train the adapter
+train_planner: True    # Train the planner as well
+
+# Direct planning overrides
+planning:
+  split_idx_mode: "random"  # Use "random" or a number to have a fixed position.
+  num_samples: 5       # Override default number of samples
+  continuation_length: 10  # Override default continuation length
+  use_gpt_embeddings: True  # Initialize planner embeddings with embeddings from AR baseline
+  cut_outputs: False # If true, the prompt is not passed to the planner (i.e. only continuation is passed)
+
+# Maybe override the run name
+name: from_pretrained_${model_name}-${dataset_name}-lr${optim.learning_rate}
+
+ckpt_path: <ckpt_path> # TODO adjust this path to point to a .ckpt file from the AR baseline
+
+# Add any other specific overrides for combined training if needed
+# e.g., adjust learning rate for combined training
+# optim:
+#   learning_rate: 8e-5 
