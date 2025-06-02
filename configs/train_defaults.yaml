@@ -31,7 +31,7 @@ hydra:
     env_set:
       NCCL_P2P_DISABLE: 1
       # TODO change this to the place you would like your data saved
-      DATA_ROOT: /checkpoint/sayan/knowledge 
+      DATA_ROOT: /checkpoint/sayan/knowledge
   run:
     dir: ${logs_dir}
   sweep:
@@ -39,17 +39,36 @@ hydra:
 
 trainer:
   precision: 16-mixed
-  # default to train on full set of samples
-  limit_train_batches: 1.0
-  overfit_batches: 0
-  accumulate_grad_batches: 1
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: "norm"
+  accumulate_grad_batches: 4  # Increase batch stability
 
 wandb:
   project: ${project}
-  entity: mlmu
+  entity: planning-llms
   notes: null
   tags: null
   log_model: False
   save_code: True
   reinit: True
   offline: False
+
+
+# Whether to train the base autoregressive (AR) model
+train_base: true  #  We set this to true to train the AR baseline model from scratch or continue training.
+
+# Whether to train the planning adapter (the planner)
+train_planner: False  #  We set this to false because we don't want to train the planner adapter right now.
+
+planning:
+  # Number of candidate plans to sample per input
+  num_samples: 5  # Try 5 different continuation paths for each prompt to help the planner choose the best one.
+
+  # How many steps/tokens each plan should continue for
+  continuation_length: 10  # Limit the length of each generated plan to 10 tokens for efficiency and control.
+
+  # How to pick where to split the input and continuation
+  split_idx_mode: random  # Use a random index in the input sequence as the split point to encourage generalization.
+
+  # Whether to exclude the prompt from planner input
+  cut_outputs: true  # Only pass the continuation (not the full prompt) to the planner to force learning from completions alone.

@@ -87,6 +87,8 @@ class TransformerSampleEncoder(SampleEncoder):
         super().__init__(hidden_size)
         self.hidden_size = hidden_size
         self.vocab_size = vocab_size
+        # keep number of heads so we can shape the attention mask correctly
+        self.num_attention_heads = num_attention_heads
         
         # Token embedding (will convert one-hot to hidden_size)
         if pretrained_embeddings is not None:
@@ -118,25 +120,50 @@ class TransformerSampleEncoder(SampleEncoder):
         """Create attention mask that allows hidden state to attend to all valid tokens but not vice versa."""
         if sequence_mask is None:
             return None
-        
+
         # Create attention mask of shape [batch_size, 1 + seq_length, 1 + seq_length]
-        attention_mask = torch.zeros((batch_size, 1 + seq_length, 1 + seq_length), 
+        attention_mask = torch.zeros((batch_size, 1 + seq_length, 1 + seq_length),
                                   device=sequence_mask.device, dtype=torch.bool)
-        
+
         # Hidden state (position 0) can attend to valid tokens only and also itself
         attention_mask[:, 0, 1:] = sequence_mask
         attention_mask[:, 0, 0] = True
-        
+
         # Other tokens can attend to each other based on sequence_mask
         attention_mask[:, 1:, 1:] = sequence_mask.unsqueeze(1) & sequence_mask.unsqueeze(2)
         # but they cannot attend to hidden state
         attention_mask[:, 1:, 0] = False
-        
-        # Repeat mask for each head and fold into batch dimension
-        # [batch_size, 1 + seq_length, 1 + seq_length] -> [batch_size * num_heads, 1 + seq_length, 1 + seq_length]
-        attention_mask = attention_mask.unsqueeze(1).expand(-1, 8, -1, -1).reshape(-1, 1 + seq_length, 1 + seq_length)
-        
-        return ~attention_mask  # True means position can be attended to
+
+        # ------------------------------------------------------------------
+        # Guarantee that every token row has at least one *allowed* key so
+        # that soft‑max does not receive a row of all −inf (which leads to
+        # NaNs in the backward pass).  
+        # For rows that correspond to padding tokens (`sequence_mask == False`)
+        # we permit attention to the special hidden‑state token at column 0.
+        invalid_rows = ~sequence_mask  # shape: [B, L]
+        attention_mask[:, 1:, 0] |= invalid_rows
+        # ------------------------------------------------------------------
+
+        # Expand mask along the heads dimension so MultiheadAttention
+        # receives a (B × H, L, S) tensor, as required for a 3‑D mask.
+        if self.num_attention_heads > 1:
+            attention_mask = (
+                attention_mask                # (B, L, S)
+                .unsqueeze(1)                 # (B, 1, L, S)
+                .expand(-1, self.num_attention_heads, -1, -1)   # (B, H, L, S)
+                .reshape(-1, attention_mask.size(1), attention_mask.size(2))  # (B*H, L, S)
+            )
+
+        # PyTorch `MultiheadAttention` (used internally by `nn.TransformerEncoder`)
+        # accepts either
+        #   • an (L, S) mask shared by the whole batch, **or**
+        #   • a (B, L, S) mask that is different for each sample.
+        # We expand to (B × H, L, S) so that every head gets its own per‑sample mask.
+        #
+        # In our construction `attention_mask == True` means "this position may be
+        # attended to".  `MultiheadAttention` expects **True to mean *mask out***
+        # (i.e. *disallow* attention), so we invert before returning.
+        return ~attention_mask
     
     def forward(self, sequences: torch.Tensor, mask: Optional[torch.Tensor] = None,
                hidden_state: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -156,6 +183,9 @@ class TransformerSampleEncoder(SampleEncoder):
         # Create attention mask
         attention_mask = self.create_attention_mask(~mask if mask is not None else None, batch_size, seq_length)
         
+        if torch.isnan(combined_states).any():
+            raise RuntimeError("NaNs in combined_states **before** LayerNorm")
+
         # Apply transformer encoder
         encoded = self.encoder(combined_states, mask=attention_mask)
         
@@ -275,7 +305,6 @@ class BaseSampleAdapter(nn.Module):
     
     @abstractmethod
     def process_samples(self, samples, hidden_state=None):
-        """Process the samples (either tokens or hidden states) through encoder."""
         pass
     
     def forward(self, samples, hidden_state=None):

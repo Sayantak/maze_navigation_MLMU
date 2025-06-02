@@ -4,6 +4,8 @@ All rights reserved.
 This source code is licensed under the license found in the
 LICENSE file in the root directory of this source tree.
 """
+#import pdb
+
 import hydra
 # from submitit.helpers import RsyncSnapshot # Keep if using the Linux Rsync version later
 from hydra.utils import instantiate, get_class
@@ -15,12 +17,10 @@ from recipe.logger import setup_wandb, get_git_hash, find_existing_checkpoint
 from recipe.utils import check_model_dataset_consistency
 import logging
 import os
-import getpass
 import tempfile
 import torch
 import shutil
 from recipe.models.planning import TransformerSampleEncoder  # Add this import
-
 
 log = logging.getLogger(__name__)
 git_hash = get_git_hash()
@@ -37,16 +37,18 @@ original_root_dir = os.getcwd()
     config_name="train_defaults.yaml",
 )
 def main(config: DictConfig) -> None:
-    # --- Snapshot logic moved here ---
     # Use original_root_dir captured before Hydra's potential chdir
     root = original_root_dir
     print("Original Root is: ", root)
 
-    # Get base_dir from Hydra config
-    base_dir = config.get("base_dir", "/tmp/mlmu_snapshots") # Use get with a default
-    os.makedirs(base_dir, exist_ok=True)
-    # Use a temporary directory within the configured base_dir
-    snapshot_dir = tempfile.mkdtemp(prefix=os.path.join(base_dir, "snapshot_"))
+    # Get the snapshot base directory from the config or use default
+    base_dir = config.get("base_dir", "/tmp/mlmu_snapshots")  # This ensures flexibility in where snapshots are stored
+    os.makedirs(base_dir, exist_ok=True)  # Ensure the base directory exists before using it
+    # Define a manual snapshot directory inside the base directory
+    #CHANGED
+    snapshot_dir = os.path.join(base_dir, "snapshot_manual")
+    # Create the snapshot directory if it doesn't already exist
+    os.makedirs(snapshot_dir, exist_ok=True)
     print("Snapshot dir is: ", snapshot_dir)
 
     try:
@@ -192,16 +194,20 @@ def main(config: DictConfig) -> None:
         )
 
         # Configure Trainer
-        # config.trainer.accelerator = config.accelerator # This might be redundant if already in config
+        trainer_config = {**config.trainer}
+        if 'gradient_clip_val' in trainer_config:
+            del trainer_config['gradient_clip_val']
+        
+        #pdb.set_trace()
         trainer = Trainer(
-            **config.trainer,
+            **trainer_config,
             logger=wandb_logger,
             callbacks=[checkpoint_callback],
             strategy="auto" if config.gpus <= 1 else "ddp_find_unused_parameters_true",
             fast_dev_run=16 if config.debug else False,
             profiler="simple" if config.debug else None,
             detect_anomaly=config.debug,
-            deterministic=True,
+            deterministic=False,
             gradient_clip_val=config.optim.grad_clip,
             enable_progress_bar=not config.use_wandb,
         )
@@ -263,7 +269,6 @@ def main(config: DictConfig) -> None:
         # Optionally remove the snapshot directory
         # print(f"Removing snapshot directory: {snapshot_dir}")
         # shutil.rmtree(snapshot_dir)
-
 
 if __name__ == "__main__":
     # This now calls the @hydra.main decorated function

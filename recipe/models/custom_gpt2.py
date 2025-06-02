@@ -1,7 +1,8 @@
+from loguru import logger
 import torch
 import torch.nn as nn
 from transformers import GPT2PreTrainedModel
-from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2MLP, GPT2Block
+from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2MLP
 from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions, BaseModelOutputWithPastAndCrossAttentions
 from transformers.generation.utils import GenerationMixin
 from transformers.utils.model_parallel_utils import get_device_map, assert_device_map
@@ -20,6 +21,7 @@ class CodeHandler(nn.Module):
     
     def forward(self, codes, hidden_states):
         if codes is not None and codes.nelement() > 0:
+            # Add epsilon to prevent numerical instability
             processed_codes = self.code_linear(codes)
             if processed_codes.shape != hidden_states.shape:
                 raise ValueError(f"Shape mismatch between processed codes {processed_codes.shape} and hidden states {hidden_states.shape}")
@@ -423,12 +425,15 @@ class CodeGPT2Block(nn.Module):
         use_cache: Optional[bool] = False,
         output_attentions: Optional[bool] = False,
         codes: Optional[torch.FloatTensor] = None,
-    ) -> Union[Tuple[torch.Tensor], Optional[Tuple[torch.Tensor, Tuple[torch.FloatTensor, ...]]]]:
+    ) -> Union[Tuple[torch.Tensor], Optional[Tuple[torch.Tensor, Tuple[torch.FloatTensor,  ...]]]]:
         residual = hidden_states
         hidden_states = self.ln_1(hidden_states)
 
         hidden_states = self.code_handler(codes, hidden_states)
 
+        #torch.autograd.set_detect_anomaly(True)
+
+        # add self-attention block
         attn_outputs = self.attn(
             hidden_states,
             layer_past=layer_past,
