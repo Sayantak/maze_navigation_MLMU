@@ -1,0 +1,16 @@
+# Inherit settings from the default config
+defaults:
+  - train_defaults
+  # You can override other defaults here if needed
+  # - override optim: adamw_low_lr # Example
+
+# Override specific settings for this configuration
+train_base: False      # Freeze the base model
+train_planner: True   # Train only the planner
+
+# Maybe override the run name
+name: planner_only_${model_name}-${dataset_name}-lr${optim.learning_rate}
+
+# You can override any other parameter from train_defaults.yaml here
+# optim:
+#   learning_rate: 5e-5 

@@ -1,0 +1,15 @@
+# Inherit settings from the default config
+defaults:
+  - train_defaults
+
+# Override specific settings for this configuration
+train_base: True       # Train the base model
+train_planner: True    # Train the planner as well
+
+# Maybe override the run name
+name: base_and_planner_${model_name}-${dataset_name}-lr${optim.learning_rate}
+
+# Add any other specific overrides for combined training if needed
+# e.g., adjust learning rate for combined training
+# optim:
+#   learning_rate: 8e-5 

@@ -1,0 +1,26 @@
+# Inherit settings from the default config
+defaults:
+  - train_defaults
+  # No planning entry here
+
+# Override specific settings for this configuration
+train_base: False 
+train_planner: True    # Train the planner as well
+
+# Direct planning overrides
+planning:
+  split_idx_mode: "3"  # Use a fixed position
+  num_samples: 5       # Override default number of samples
+  continuation_length: 10  # Override default continuation length
+  use_gpt_embeddings: False  # Initialize planner embeddings from GPT2
+  cut_outputs: False
+
+# Maybe override the run name
+name: planner_from_pretrained_fixed_${model_name}-${dataset_name}-lr${optim.learning_rate}
+
+ckpt_path: /home/fmai/checkpoint/logs/mlmu/base_only_gpt_ar_d4-maze10-lr0.001/base-ckpt.ckpt
+
+# Add any other specific overrides for combined training if needed
+# e.g., adjust learning rate for combined training
+# optim:
+#   learning_rate: 8e-5 

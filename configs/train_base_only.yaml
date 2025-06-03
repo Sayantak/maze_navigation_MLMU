@@ -1,0 +1,13 @@
+# Inherit settings from the default config
+defaults:
+  - train_defaults
+
+# Override specific settings for this configuration
+train_base: True       # Train the base model
+train_planner: False   # Do NOT train the planner
+
+# Maybe override the run name
+name: base_only_${model_name}-${dataset_name}-lr${optim.learning_rate}
+
+# Add any other specific overrides for base-only training if needed
+# e.g., different learning rate, batch size, etc. 
